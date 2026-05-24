@@ -175,7 +175,12 @@ class ApplicationState {
       this.handleExit();
       return true;
     });
-    this.windowManager.bindKey('\x13', () => {
+    this.windowManager.bindKey('\x13', (ctx) => {
+      // W trybie edycji w DetailsPanel Ctrl+S zapisuje edytowane pole (title/notes),
+      // nie wykonuje globalnego zapisu drzewa do pliku.
+      if (ctx.focusedControl === this.detailsPanel && this.detailsPanel.getEditMode() === 'edit') {
+        return false;
+      }
       this.handleSave();
       return true;
     });

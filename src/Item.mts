@@ -168,6 +168,7 @@ export default class Item implements ItemInterface {
       this.tags,
       this.notes,
       this.properties,
+      this.priority,
     );
     for (const child of this.children) {
       newItem.addChild(child);
@@ -194,6 +195,7 @@ export default class Item implements ItemInterface {
       newTags,
       this.notes,
       this.properties,
+      this.priority,
     );
     for (const child of this.children) {
       newItem.addChild(child);
@@ -217,6 +219,7 @@ export default class Item implements ItemInterface {
       newTags,
       this.notes,
       this.properties,
+      this.priority,
     );
     for (const child of this.children) {
       newItem.addChild(child);
@@ -231,7 +234,7 @@ export default class Item implements ItemInterface {
    * @returns Nowy Item
    */
   public withTitle(title: string): Item {
-    const newItem = new Item(this.id, title, this.todo, this.tags, this.notes, this.properties);
+    const newItem = new Item(this.id, title, this.todo, this.tags, this.notes, this.properties, this.priority);
     for (const child of this.children) {
       newItem.addChild(child);
     }
@@ -245,7 +248,7 @@ export default class Item implements ItemInterface {
    * @returns Nowy Item
    */
   public withNotes(notes: string): Item {
-    const newItem = new Item(this.id, this.title, this.todo, this.tags, notes, this.properties);
+    const newItem = new Item(this.id, this.title, this.todo, this.tags, notes, this.properties, this.priority);
     for (const child of this.children) {
       newItem.addChild(child);
     }
@@ -261,7 +264,7 @@ export default class Item implements ItemInterface {
   public removeProperty(key: string): Item {
     const newProperties = new Map(this.properties);
     newProperties.delete(key);
-    const newItem = new Item(this.id, this.title, this.todo, this.tags, this.notes, newProperties);
+    const newItem = new Item(this.id, this.title, this.todo, this.tags, this.notes, newProperties, this.priority);
     for (const child of this.children) {
       newItem.addChild(child);
     }
@@ -286,6 +289,7 @@ export default class Item implements ItemInterface {
       this.tags,
       this.notes,
       newProperties,
+      this.priority,
     );
     for (const child of this.children) {
       newItem.addChild(child);
@@ -306,6 +310,7 @@ export default class Item implements ItemInterface {
       this.tags,
       this.notes,
       this.properties,
+      this.priority,
     );
     for (const child of this.children) {
       clonedItem.addChild(child.clone());

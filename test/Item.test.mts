@@ -210,3 +210,22 @@ test('Item - clone creates independent copy', () => {
   assert.deepEqual(original.getTags(), ['tag1']);
   assert.deepEqual(modifiedClone.getTags(), ['tag1', 'tag2']);
 });
+
+/**
+ * Regression: priority must survive every immutable update (setTodo, addTag,
+ * removeTag, withTitle, withNotes, setProperty, removeProperty, clone). The
+ * Item constructor takes priority as the 7th positional argument with default
+ * null, so any rebuild that forgets to forward this.priority silently drops it.
+ */
+test('Item - priority survives all immutable updates', () => {
+  const base = new Item('p1', 't', 'TODO', ['a'], 'n', new Map([['k', 'v']]), 'A');
+
+  assert.equal(base.setTodo('DONE').getPriority(), 'A', 'setTodo');
+  assert.equal(base.addTag('b').getPriority(), 'A', 'addTag');
+  assert.equal(base.removeTag('a').getPriority(), 'A', 'removeTag');
+  assert.equal(base.withTitle('x').getPriority(), 'A', 'withTitle');
+  assert.equal(base.withNotes('x').getPriority(), 'A', 'withNotes');
+  assert.equal(base.setProperty('k2', 'v2').getPriority(), 'A', 'setProperty');
+  assert.equal(base.removeProperty('k').getPriority(), 'A', 'removeProperty');
+  assert.equal(base.clone().getPriority(), 'A', 'clone');
+});

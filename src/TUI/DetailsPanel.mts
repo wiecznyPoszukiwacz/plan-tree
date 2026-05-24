@@ -123,13 +123,13 @@ export default class DetailsPanel extends Window implements Focusable {
       this.invalidate();
       return;
     }
-    // Title: Enter = save. Notes: Enter = nowa linia, Ctrl+S = save.
-    if (this.state.editingField === 'title' && (key === '\r' || key === '\n' || key === 'Enter')) {
+    // Title: Enter lub Ctrl+S = save. Notes: Enter = nowa linia, Ctrl+S = save.
+    if (key === '\x13' /* Ctrl+S */) {
       this.saveEditedValue();
       this.invalidate();
       return;
     }
-    if (this.state.editingField === 'notes' && key === '\x13' /* Ctrl+S */) {
+    if (this.state.editingField === 'title' && (key === '\r' || key === '\n' || key === 'Enter')) {
       this.saveEditedValue();
       this.invalidate();
       return;

@@ -3,6 +3,23 @@
 All notable changes to plan-tree TUI are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] — 2026-05-24
+
+### Fixed
+
+- **Priority gubione przy każdej mutacji Item.** Konstruktor `Item` przyjmuje
+  `priority` jako 7. parametr z domyślnym `null`, a 8 metod immutable update
+  (`setTodo`, `addTag`, `removeTag`, `withTitle`, `withNotes`, `setProperty`,
+  `removeProperty`, `clone`) wołało `new Item(...)` tylko z 6 argumentami —
+  cicho czyściło priority. Skutek: `TreeOperations.add` (przez `tree.root.clone()`)
+  resetował priority całego drzewa, tytuły traciły kolor w TreePanel. Dodany
+  test regresyjny w `Item.test.mts`.
+- **Ctrl+S nie zapisywał edytowanego pola w DetailsPanel.** Globalny binding
+  `\x13` przejmował klawisz zanim DetailsPanel zdążył zareagować. Teraz w
+  trybie edycji (title lub notes) Ctrl+S zapisuje pole; poza edycją zachowuje
+  globalny zapis drzewa. DetailsPanel akceptuje Ctrl+S również dla title
+  (wcześniej tylko Enter).
+
 ## [0.5.0] — 2026-05-24
 
 Wielka fala — kompletny warsztat TUI (edytor z klawiatury) + system priorytetów
