@@ -1,0 +1,231 @@
+* DONE naprawa błędów
+:PROPERTIES:
+:ID: item_1779650081567_mavy9sf
+:END:
+** DONE DetailsPanel: brak zawijania tekstu — długie linie title/notes są ucinane przy prawej krawędzi panelu zamiast łamać się na wiele wizualnych wierszy
+:PROPERTIES:
+:ID: item_1779651519598_pb1awhl
+:END:
+* DONE Rozszerzenia MCP — brakujące narzędzia do komfortowej pracy z planem
+:PROPERTIES:
+:ID: item_1779651192297_xj907n7
+:END:
+** DONE setTodo(itemId, todo) — zmiana stanu TODO bez kasowania węzła
+:PROPERTIES:
+:ID: item_1779651202251_t2sf8hh
+:END:
+** DONE rename(itemId, title) — zmiana tytułu bez utraty ID, dzieci, notes
+:PROPERTIES:
+:ID: item_1779651203980_fnbc2q9
+:END:
+** DONE setNotes(itemId, notes) — edycja notatek
+:PROPERTIES:
+:ID: item_1779651205049_hmh47bi
+:END:
+** DONE moveBefore(itemId, siblingId) / moveAfter — precyzyjne ustawianie kolejności rodzeństwa
+:PROPERTIES:
+:ID: item_1779651207082_hva6znl
+:END:
+** DONE find(titleContains?, todo?, tag?) — wyszukiwanie zwracające [{id, title, todo, tags, depth}]
+:PROPERTIES:
+:ID: item_1779651209169_96i8d2i
+:END:
+** DONE addTag / removeTag / setProperty — zarządzanie metadanymi po utworzeniu
+:PROPERTIES:
+:ID: item_1779651210264_tdxesfr
+:END:
+** DONE rozszerzenie add o opcjonalne notes i tags
+:PROPERTIES:
+:ID: item_1779651211883_oibbyd3
+:END:
+** DONE resource tree://summary — lekki overview
+:PROPERTIES:
+:ID: item_1779651213689_g8hwdxg
+:END:
+** DONE krótsze generowane ID — format n487 zamiast item_<ts>_<rand>
+:PROPERTIES:
+:ID: item_1779651307682_8jg9scl
+:END:
+*** DONE Decyzja: seeding countera — szukać max sufiksu n<N> w istniejących ID i startować od N+1 (bez osobnego property na root)
+:PROPERTIES:
+:ID: item_1779651460930_uyz2ag5
+:END:
+*** DONE Decyzja: stare długie ID item_<ts>_<rand> zostawić w spokoju — koegzystują z nowymi, znikną naturalnie wraz z usuwaniem/przepisywaniem węzłów
+:PROPERTIES:
+:ID: item_1779651462133_hkboda1
+:END:
+* PROPOSAL Funkcje TUI dla użytkownika — edycja z klawiatury (równolegle do MCP, ale interaktywnie)
+:PROPERTIES:
+:ID: n1
+:END:
+Dziś TUI tylko wyświetla drzewo. Edycja jest możliwa wyłącznie przez MCP (agent) albo zewnętrzny edytor pliku. Cel: dać użytkownikowi pełen warsztat z klawiatury, żeby plan-tree TUI był samodzielnym narzędziem.
+** DONE Wykończyć edycję title — saveEditedValue jest stubem
+:PROPERTIES:
+:ID: n2
+:END:
+DetailsPanel.saveEditedValue() obecnie tylko wychodzi z trybu edit, bez wywołania mutation na drzewie. Trzeba przepuścić nowy tytuł przez TreeOperations.rename i odświeżyć drzewo + autosave (callback onTreeChanged już istnieje w main.mts).
+** DONE Edycja notes (multi-line) — 'n' tryb edit, Enter=newline, Esc=cancel, Ctrl+S=save
+:PROPERTIES:
+:ID: n3
+:END:
+Notes są często wielolinijkowe — trzeba edytora który obsługuje Enter jako nową linię, a osobny skrót (Ctrl+S albo Ctrl+Enter) jako save. Po save: TreeOperations.setNotes + onTreeChanged.
+** DONE Cykl stanu TODO — 't' przełącza TODO/WORK-UNIT/DONE
+:PROPERTIES:
+:ID: n4
+:END:
+Najczęstsza operacja codziennej pracy. Wariant 1: pojedynczy klawisz cyklujący przez listę stanów. Wariant 2: 't' otwiera popup-picker. TreeOperations.setTodo + onTreeChanged.
+** DONE Dodanie dziecka / rodzeństwa — 'a' add child, 'o' add sibling po, 'O' add sibling przed
+:PROPERTIES:
+:ID: n5
+:END:
+Po dodaniu: wejść od razu w tryb edycji tytułu nowego węzła. TreeOperations.add (parent = focused dla 'a', parent.parent dla 'o'/'O', plus moveBefore/moveAfter dla pozycji).
+** DONE Usunięcie węzła — 'd' lub Del, z modalem potwierdzenia
+:PROPERTIES:
+:ID: n6
+:END:
+Operacja destrukcyjna — wymaga potwierdzenia z liczbą węzłów usuwanych w poddrzewie (już zwracaną w diff przez delete tool). TreeOperations.deleteItem.
+** Edycja tagów — tryb tag-edit, lista chipów
+:PROPERTIES:
+:ID: n7
+:END:
+Klawisz np. '#'. Walidacja tagu (no whitespace, no ':') już jest w TreeOperations.addTag.
+** DONE Reorder rodzeństwa — Alt+↑/↓ przesuwa wśród siblingów
+:PROPERTIES:
+:ID: n8
+:END:
+TreeOperations.moveBefore/moveAfter z bieżącym sąsiadem.
+** DONE Indent / outdent — Tab pod sibling, Shift+Tab do dziadka
+:PROPERTIES:
+:ID: n9
+:END:
+Klasyczna nawigacja outline'owa. TreeOperations.move.
+** DONE Fold/unfold poddrzewa — zwijanie gałęzi w TreePanel
+:PROPERTIES:
+:ID: n10
+:END:
+Stan fold/unfold per ID, lokalny dla TreePanel (nie zapisuje się do pliku ani do MCP — czysta prezentacja).
+** Wyszukiwanie z TUI — '/' otwiera prompt, wyniki na żywo
+:PROPERTIES:
+:ID: n11
+:END:
+Backend już jest (TreeOperations.find). Tylko UI: input field + lista wyników w jakimś modalu albo overlay.
+** DONE Undo (Ctrl+Z) / redo (Ctrl+Shift+Z) — stos historii drzew
+:PROPERTIES:
+:ID: n12
+:END:
+Trzymanie poprzednich snapshotów Tree w pamięci (immutable pattern w TreeOperations sprzyja). Limit np. 100. Działa zarówno dla edycji z TUI jak i dla mutacji MCP (zachowuje stan przed/po onTreeChanged).
+** DONE Pokazywanie / ukrywanie DONE — toggle 'H' filtrujący zakończone węzły z TreePanel
+:PROPERTIES:
+:ID: n13
+:END:
+Domyślnie ukryte żeby plan był skoncentrowany na aktywnej pracy. Stan filtra lokalny dla TreePanel (jak fold/unfold — czysta prezentacja, nie zapisywane do pliku). Pasek statusu pokazuje liczbę ukrytych ("(+N done hidden)"). Ukrywanie poddrzewa: jeśli rodzic DONE ale ma dzieci nie-DONE — wciąż pokaż rodzica (inaczej ukryjemy aktywne dzieci); decyzja do potwierdzenia przy implementacji.
+*** DONE Decyzja: rodzic DONE z dziećmi nie-DONE — pokazywać. Ukrywanie ucinałoby aktywne dzieci spod widoku.
+:PROPERTIES:
+:ID: n14
+:END:
+** DONE Wyróżnienie QUESTION w TreePanel — wizualnie odróżnić węzły wymagające odpowiedzi
+:PROPERTIES:
+:ID: n29
+:END:
+Pytania (QUESTION) ginują w tle gdy lista jest długa, a to one są najczęściej blockerami. Propozycja: prefix ? lub ❓ + akcent (np. żółty/cyjan) w TreePanel. Spójne z paletą priorytetów z n27 — wybrać kolor, który się nie gryzie z czerwonym/pomarańczowym.
+Powiązane: po wdrożeniu cyklu TODO state z TUI (n4) i tego wyróżnienia QUESTION wizualnie wyskoczy z planu — łatwiej będzie zauważyć "co czeka na decyzję".
+* DONE Koncepcja: freeze — wstrzymane taski
+:PROPERTIES:
+:ID: n15
+:END:
+Zamrożone zadania nadal istnieją w planie (nie są zdroppowane), ale zarówno CC jak i użytkownik wiedzą, że teraz tego NIE robimy. Różnica od DROPPED: DROPPED = porzucone na stałe; FROZEN = pauza, możliwe wznowienie.
+Use cases:
+- Czekamy na decyzję zewnętrzną (zablokowane).
+- Pomysł zachowany na później, ale teraz nie ma kapitału.
+- Eksperymentalna gałąź odłożona po nieudanym podejściu.
+Wymaga: (1) mechanizmu oznaczenia, (2) widoczności dla agenta przez MCP, (3) afordancji w TUI (zwykle nie robimy, ale w razie czego pokaż).
+** DONE Decyzja: mechanizm freeze = property :FROZEN: t (opcja C)
+:PROPERTIES:
+:ID: n16
+:END:
+Opcje:
+(A) Nowy TodoState 'FROZEN' — czyste semantycznie, ale wymaga zmiany w types.mts (TodoState union), OrgReader regex, MCP enum tools, walidacji w add/setTodo. Też: węzeł ma tylko jeden state, więc FROZEN wyklucza TODO/PROPOSAL/itd. — co jeśli zamrażamy WORK-UNIT?
+(B) Tag :frozen: — bez zmiany schematu, koegzystuje z dowolnym state. Filtrowanie przez addTag/removeTag i find(tag='frozen'). Ale "freeze" jako tag traktujemy umownie; nic w kodzie nie wymusi semantyki.
+(C) Property :FROZEN: t — podobnie do tagu, ale to flaga 0/1 zamiast tagu w liście. Mniej widoczne w org-mode.
+(D) Hybryda: tag + dedykowany helper tool freeze/unfreeze owijający addTag/removeTag.
+** DONE Decyzja: find/tree://summary domyślnie ukrywa FROZEN, opt-in przez includeFrozen=true (opcja A)
+:PROPERTIES:
+:ID: n17
+:END:
+Agent (Claude Code) musi wiedzieć "nie ruszaj" bez ekstra pytania. Dwie filozofie:
+(A) Domyślnie find/tree://summary ukrywa FROZEN; opt-in przez parametr includeFrozen=true. Agent nie zobaczy ich w typowym przebiegu, nie zaproponuje pracy nad nimi.
+(B) Zawsze zwraca FROZEN, ale z jawną flagą; instrukcje serwera MCP nakazują agentowi je pomijać przy "co robić dalej". Bardziej transparentne; ryzyko że agent zignoruje instrukcję.
+** DONE Afordancja w TUI — toggle widoczności analogiczny do show/hide DONE
+:PROPERTIES:
+:ID: n18
+:END:
+Klawisz np. 'F' przełącza pokaż/ukryj FROZEN w TreePanel. Domyślnie ukryte (jak DONE). Pasek statusu pokazuje liczbę ukrytych "(+N frozen hidden)". W trybie pokazanym węzeł FROZEN ma wizualne odróżnienie (np. szary, kursywa, prefix ❄ jeśli NerdFont).
+* DONE Świadomość selekcji TUI w MCP — agent wie, jaki task jest zaznaczony
+:PROPERTIES:
+:ID: n19
+:END:
+Cel: w rozmowach typu "co to za zadanie?", "rozwiń to", "split tego" CC ma natychmiastową świadomość focusowanego węzła w TreePanel, bez pytania użytkownika.
+Wykonalność: trywialna. TreePanel.getSelectedItem() już istnieje i jest aktualizowane przez ruchy klawiatury. main.mts już rejestruje onSelectionChanged dla DetailsPanel — analogiczna ścieżka do MCPServer.
+Trzy ścieżki rozważone:
+(A) Resource tree://selection — { id, title, path }. CC musi sam zapytać; bez wzmianki w SERVER_INSTRUCTIONS nie pomyśli.
+(B) Tool getSelection() — bardziej naturalny dla agenta niż resource, ale nadal pull.
+(C) Ambient context — dokleić selection: {id, title, path} do KAŻDEJ odpowiedzi runTool i każdego resource. CC i tak woła tools przy akcjach, więc dostaje selekcję za darmo bez pytania.
+Rekomendacja: C jako podstawa (ambient) + B jako opcjonalny tool dla celowych pytań bez akcji ("co jest zaznaczone?"). A pomijać — duplikuje B.
+Edge case: węzeł skasowany przed odczytem — bezpiecznie zwracać null.
+** DONE Wiring: MCPServer dostaje getSelection callback z main.mts (analogicznie do onTreeChanged)
+:PROPERTIES:
+:ID: n20
+:END:
+Rozszerzyć konstruktor MCPServer o `getSelection: () => Item | null`. main.mts przekazuje `() => this.treePanel.getSelectedItem()`. Bezpośredni call → zawsze aktualne.
+** DONE Opcja C: ambient selection w payloadzie runTool i resources — selection: {id, title, path}
+:PROPERTIES:
+:ID: n21
+:END:
+Pole opcjonalne w envelope. path = lista ID od roota do selekcji włącznie (do nawigacji). null gdy nic nie zaznaczone lub focusowany węzeł już nie istnieje w drzewie.
+** DONE Opcja B: tool getSelection() — celowe zapytanie bez wykonywania akcji
+:PROPERTIES:
+:ID: n22
+:END:
+Zwraca to samo co pole ambient. Przydatny gdy user pyta "co jest zaznaczone?" bez kontekstu poprzedniego tool calla.
+** DONE SERVER_INSTRUCTIONS: wzmianka o polu selection w wynikach tools — żeby agent wiedział, że może je czytać
+:PROPERTIES:
+:ID: n23
+:END:
+Bez wzmianki w instrukcjach agent może zignorować nieznane pole. Wystarczy jedna linia: "Each tool/resource response includes `selection: {id, title, path}` describing the currently focused TUI item, or null if none — use this to disambiguate references like 'this' or 'the current task'."
+* DONE Priorytety jako metadata (zamiast gwiazdek w tytule) — render gradientem kolorów
+:PROPERTIES:
+:ID: n24
+:END:
+Dziś priorytet zapisany jest jako prefix tytułu (★★★ / ★★ / ★) — wymieszane z treścią, niewyszukiwalne osobno, łatwe do pomyłki przy edycji. Lepiej: osobny atrybut + wizualne odróżnienie w TreePanel kolorem (gradient od pilnego do tła).
+Wymaga: (1) decyzji jak przechowywać, (2) skali (3 czy 5 poziomów), (3) palety kolorów, (4) migracji istniejących pozycji z ★ w tytułach.
+Backend MCP: priorytet to nowy parametr w add/setPriority + nowy filter w find. UI: render kolorowy w TreePanel + ewentualnie sortowanie/filtrowanie po priorytecie.
+** DONE Decyzja: mechanizm = org-mode native [#A]/[#B]/[#C] (opcja C)
+:PROPERTIES:
+:ID: n25
+:END:
+(A) Property :PRIORITY: high|medium|low — czyste semantycznie, swobodna skala. Niewidoczne w pliku bez otwarcia drawera. Wymaga setProperty/getProperty (już istnieją).
+(B) Tag :p1: / :p2: / :p3: — widoczne w tytule org-mode, łatwo filtrować przez find(tag). Tagi to umowna semantyka, mogą się mieszać z innymi.
+(C) Org-mode native [#A] / [#B] / [#C] — standard org-mode, parsowalne przez emacs/inne narzędzia. Wymaga rozszerzenia regex w OrgReader i nowego pola w typesach (priority?: 'A'|'B'|'C').
+Rekomendacja: (C) — standard ekosystemu, narzędzia zewnętrzne (Emacs, vim-orgmode) to rozumieją. (A) jako fallback gdyby (C) okazało się za inwazyjne.
+** DONE Decyzja: skala = 3 poziomy (mapowanie na [#A]/[#B]/[#C], brak priorytetu = no priority)
+:PROPERTIES:
+:ID: n26
+:END:
+3 poziomy: prostsze do utrzymania mentalnie, każdy element ma jasne miejsce. Org-mode native to [#A]/[#B]/[#C] = 3 poziomy.
+5 poziomów: więcej granularności, ale w praktyce użytkownicy i tak grupują w 3 (urgent/normal/someday).
+Rekomendacja: 3, mapowanie na [#A]/[#B]/[#C]. Dodatkowo brak priorytetu = "no priority" (domyślne).
+** DONE Decyzja: paleta = akcent + neutral (czerwony high, pomarańczowy med, bez koloru low/none) — opcja C
+:PROPERTIES:
+:ID: n27
+:END:
+Opcje:
+(A) Klasyczny heat: czerwony (high) → żółty (med) → zielony (low). Intuicyjny, ale "zielony" mylące — sugeruje "ok/done".
+(B) Saturacja: nasycony czerwony (high) → bladoróżowy (med) → szary (low). Spójny ton, niższy priorytet = wycofany.
+(C) Akcent + neutral: czerwony (high), pomarańczowy (med), bez koloru (low/none). Najmniejszy szum wizualny.
+(D) Sam atrybut: bold (high), normal (med), dim (low). Bez kolorów — działa wszędzie, dyskretne.
+Rekomendacja: (C) lub (D). Kolor tylko tam gdzie naprawdę woła o uwagę.
+** DONE Migracja: ★★★/★★/★ w istniejących tytułach → priorytet metadata + clean title
+:PROPERTIES:
+:ID: n28
+:END:
+Migracja raz ręcznie — bez tool'a migrateStarsToProperty. Po wdrożeniu mechanizmu [#A]/[#B]/[#C] (n25) wystarczy przejść te ~10 węzłów w planie: setProperty (lub odpowiednik dla priority cookie) + rename obcinający prefix.
