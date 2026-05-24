@@ -229,3 +229,738 @@ Rekomendacja: (C) lub (D). Kolor tylko tam gdzie naprawdę woła o uwagę.
 :ID: n28
 :END:
 Migracja raz ręcznie — bez tool'a migrateStarsToProperty. Po wdrożeniu mechanizmu [#A]/[#B]/[#C] (n25) wystarczy przejść te ~10 węzłów w planie: setProperty (lub odpowiednik dla priority cookie) + rename obcinający prefix.
+* PROPOSAL Quality of life — żebyś nadążał za moim tempem
+:PROPERTIES:
+:ID: n30
+:END:
+Cel: redukcja czasu od mojej propozycji do twojej decyzji. plan-tree powstał właśnie po to — te pozycje wzmacniają tę funkcję.
+[#A] = systemowo zmienia tempo
+[#B] = wartościowe rozszerzenia
+[#C] = drugorzędne, niskie ROI
+** Stan ASSUMED — rozróżnienie "założyłem X" od "proponuję X"
+:PROPERTIES:
+:ID: n31
+:END:
+Dziś PROPOSAL/DECISION mieszają dwa sygnały:
+- proposal = twoja decyzja, czekam
+- assumed = poszedłem dalej tym tropem, potwierdź zanim wbiję głębiej
+Wymaga: nowy TodoState 'ASSUMED' (types.mts), parser w OrgReader, walidacja w MCP add/setTodo, akcent w TreePanel (np. dim+żółty?), filtr w find. Plus: każda moja decyzja "po cichu" idzie automatycznie jako ASSUMED.
+To jest twoja sieć bezpieczeństwa przed moim tempem.
+** Klawisz R — akceptacja mojej rekomendacji z notes
+:PROPERTIES:
+:ID: n32
+:END:
+Workflow obecny: QUESTION z notatką "Rekomendacja: opcja C" wymaga ode mnie rename + setTodo DONE (3 kliki).
+Po: klawisz R na QUESTION → parser notatki za prefiksem "Rekomendacja:" → rename na "Decyzja: ..." + setTodo DONE. Jeden keystroke.
+Wymaga: konwencja zapisu rekomendacji (jaki prefix? "Rekomendacja:" / "Rec:" / dedykowana sekcja w notes?), parser, akcja w TreePanel.
+Edge case: gdy brak rekomendacji w notes — R no-op + statusbar message.
+** Delta view — "co nowego od ostatniego razu"
+:PROPERTIES:
+:ID: n33
+:END:
+Każdy mój dodany/zmieniony węzeł dostaje automatycznie:
+- :ADDED-BY: claude
+- :TOUCHED: <ISO timestamp>
+TUI: hotkey (np. Ctrl+D) przełącza widok na płaską listę "delty od ostatniego oglądania", w kolejności reverse-chronological. Wracasz po godzinie, widzisz compact listę zmian bez scrollowania drzewa.
+Wymaga: ustawienie :ADDED-BY: w MCPServer (wykrywanie "agent vs user" — można po prostu: każda mutacja przez MCP = claude, każde Ctrl+S z TUI = user), persystencja "ostatniego oglądania" (lokalnie w pliku stanu TUI lub jako property roota).
+** Tryb dashboard QUESTION — wszystkie otwarte pytania w jednym widoku
+:PROPERTIES:
+:ID: n34
+:END:
+Hotkey '?' przełącza TreePanel z drzewa na płaską listę wszystkich QUESTION w planie, z notatkami i moimi rekomendacjami widocznymi obok każdej. Decydujesz pakietowo. '?' powrót do drzewa.
+Realny widok-do-podjęcia-decyzji vs obecny widok-do-przeglądania-struktury.
+Wymaga: alternatywny render w TreePanel (tryb 'tree' / 'questions'), klawisz toggle, render rozszerzony o notes (kilka linii pod tytułem). Wspiera #2 (klawisz R) bezpośrednio w tym trybie.
+** "Koszt nie-decyzji" — licznik blokowanych zadań przy QUESTION
+:PROPERTIES:
+:ID: n35
+:END:
+Każdy nierozstrzygnięty QUESTION blokuje N innych zadań. TUI obok QUESTION pokazuje licznik: "blokuje 3 dzieci, 5 dalszych zależnych".
+Pomaga priorytetyzować: wybierasz QUESTION który odblokuje najwięcej.
+Wymaga: definicja "blokuje" — domyślnie wszystkie dzieci poddrzewa (semantyka org-mode hierarchy). Opcjonalnie: explicit blocker via :BLOCKS: nN,nM property na QUESTION. Render w TreePanel: dopisek liczby po prefiksie tytułu.
+Powiązane z #4 (dashboard): tam też pokazywać licznik, sortować po nim.
+** Panic mode / freeze-depth — "nie rozwijaj tu dalej"
+:PROPERTIES:
+:ID: n36
+:END:
+Klawisz w TUI: na fokusowanym węźle ustaw tag :freeze-depth: (lub property). Mówi mi explicite "stop, ten poziom szczegółowości wystarczy".
+Cel: gdy widzę dobry kąt i chcę rozsiekać na 10 podzadań, ty mówisz "nie teraz, mam tego dość".
+Wymaga: tag/property, MCP tool freezeDepth(itemId), instrukcja w SERVER_INSTRUCTIONS żebym czytał i nie rozwijał takich węzłów dalej (split/add child pod nimi → ostrzeżenie lub odmowa).
+Różni się od FROZEN (cały task na pauzie) — tu task pracuje, ale szczegóły nie są mile widziane.
+** Markery efortu — 5min / 1h / 1dzień
+:PROPERTIES:
+:ID: n37
+:END:
+Drugorzędne. Property :EFFORT: small|medium|large lub minutowe wartości. Render w TreePanel jako mały suffix.
+Pomaga: gdy zrzucam 20 itemów, widzisz które są szybkie (zrób teraz) vs ciężkie (zaplanuj).
+Problem: wymaga ode mnie zgadywania. Zgaduję często źle, więc wartość niska.
+Można odłożyć aż #1-6 będą zrobione.
+** Plan dependency view — graf zależności między węzłami
+:PROPERTIES:
+:ID: n38
+:END:
+Drugorzędne. Property :DEPENDS-ON: nN,nM eksplicytnie określa zależności poza hierarchią org-mode. TUI rysuje arrows lub osobny widok grafu (np. via tldraw export?).
+Wartościowe dla większych planów (50+ węzłów), ale obecny plan rzadko tego wymaga. Złożona implementacja (algorytm topological sort, render grafu w TUI).
+** Conversation snippet linked to node — audit trail "dlaczego to powstało"
+:PROPERTIES:
+:ID: n39
+:END:
+Drugorzędne. Każdy mój dodany węzeł niesie 1-2 zdania context "z rozmowy" (skąd to się wzięło). Property :ORIGIN: lub osobne pole w org-headline drawer.
+Bez tego po kompaktacji konwersacji tracimy "dlaczego dodaliśmy n42". Wartościowe dla resumowania planu po dłuższej przerwie.
+Wymaga: storage poza .org (pełna konwersacja by zaśmieciła plik), albo skrót via :ORIGIN: foo.txt#L23 — link do pliku z log'iem. Złożone.
+** PROPOSAL Parsowanie opcji w QUESTION + wybór klawiszem → wpis w inbox
+:PROPERTIES:
+:ID: n64
+:END:
+Rozszerzenie [[n32]] (klawisz R) o przypadek QUESTION z wieloma opcjami. Dziś user musi czytać notes, znaleźć opcje "(A)/(B)/(C)", podjąć decyzję, ręcznie wpisać do mnie albo do planu. Po wdrożeniu: opcje renderowane jako lista skrótów, jedno naciśnięcie → wybór ląduje w [[n49]] inbox, ja go odbieram i aplikuję.
+
+Cel: skrócić ścieżkę "QUESTION pojawia się na ekranie" → "decyzja wprowadzona w plan" do jednego keystroke. Pakuje workflow rozproszony dziś po: TreePanel (widać QUESTION) + DetailsPanel (czyta notes) + czat (komunikuje decyzję) + agent (aplikuje) — w jeden ruch.
+
+Sekwencja:
+1. Agent dodaje QUESTION z notes zawierającymi opcje w konwencji.
+2. TUI parsuje notes, wyświetla opcje jako interaktywną listę z akceleratorami (A/B/C/...).
+3. User wciska klawisz wyboru.
+4. TUI tworzy wpis pod [[n49]]: "Wybór dla [[nNN]]: opcja B" + ewentualnie cytat treści opcji.
+5. Sygnał do agenta że inbox ma świeży wpis ([[n52]] mówi o sygnalizacji).
+6. Agent wykonuje implikacje wyboru: rename QUESTION→DECISION (DONE+:decision:), update odpowiednich węzłów, audyt jeśli to RS/ANCHOR ([[n50]]), itd.
+
+Decyzje do podjęcia — patrz dzieci. Konwencja zapisu opcji jest fundamentalna (od niej zależy parser).
+*** QUESTION Konwencja zapisu opcji — strict format czy luźny parser?
+:PROPERTIES:
+:ID: n65
+:END:
+Dziś moje QUESTION mają opcje "(A) ..." / "(B) ..." (patrz n52, n59, n61) — konwencja organicznie się ustaliła, ale nie wymuszona.
+
+Opcje formatu:
+(A) Strict: linia musi zaczynać się "(X) " gdzie X = pojedyncza litera A-Z. Wszystko inne ignorowane przez parser.
+(B) Luźny: parser akceptuje "(A)", "A)", "A.", "- A:", "* A —", "[A] " — kilka popularnych form.
+(C) Strict + dedykowana sekcja: notes muszą mieć blok "Opcje:" a pod nim linie "(A) ...". Reszta notes (Rekomendacja, kontekst) poza tym blokiem.
+
+Rekomendacja: (C). Powody:
+- Eliminuje fałszywe trafienia (np. "(A)" wewnątrz cytatu nie zostanie zinterpretowane jako opcja).
+- Wymusza ode mnie dyscyplinę — i tak piszę "Opcje:" naturalnie, samo skodyfikowanie jest tanie.
+- Łatwiej dorzucać meta-informacje per opcja (np. "(A) ... [tag:risky]" — parser może to wykorzystać).
+
+Powiązane: [[n51]] (format wpisu inbox) — tam celowo luźno; tu strict, bo to ja piszę a nie user.
+*** QUESTION Render opcji w TUI — gdzie i jak
+:PROPERTIES:
+:ID: n66
+:END:
+Gdzie pokazać interaktywne opcje:
+(A) DetailsPanel — gdy fokus na QUESTION i notes ma sekcję "Opcje:", renderuj je jako listę poniżej notes z highlightem akceleratora ([A] / [B] / [C]). Skróty aktywne tylko gdy fokus na DetailsPanel w view mode.
+(B) TreePanel inline — pod tytułem QUESTION wstaw indented sub-listę opcji. Bardziej kompaktowo ale komplikuje rendering drzewa.
+(C) Tryb dedykowany — wciśnięcie ? na QUESTION otwiera modal z opcjami (jak [[n34]] dashboard, ale dla pojedynczego QUESTION).
+
+Rekomendacja: (A). Najmniej zmienia istniejący layout, DetailsPanel i tak już renderuje notes — wystarczy dodać warstwę parsing+render+keybind. Pasuje do [[n34]] (dashboard QUESTION) — tam można reużyć ten sam komponent w widoku listy.
+
+Render: każda opcja jako wiersz "[A] tekst opcji" + jeśli treść zawiera "Rekomendacja: opcja X" to opcja X dostaje subtle highlight (np. bold albo ►). To pre-fokusuje wybór bez wymuszania.
+*** QUESTION Co po wyborze — co dzieje się z QUESTION i jak agent dostaje sygnał
+:PROPERTIES:
+:ID: n67
+:END:
+Po naciśnięciu klawisza A/B/C:
+
+Krok 1 — natychmiast w TUI:
+- Dodaj wpis pod [[n49]]: title np. "Decyzja n_NN: opcja B" (gdzie n_NN to ID QUESTIONa), notes = cytat treści opcji + ewentualnie pełny kontekst pytania.
+- Opcjonalnie tag :choice:.
+
+Krok 2 — co z oryginalnym QUESTION:
+(A) Zostaje QUESTION, niczego nie zmieniamy — agent dopiero zamknie go na DONE po zaaplikowaniu konsekwencji.
+(B) Od razu setTodo na nowy stan np. ANSWERED lub DONE z notatką "user wybrał B" — agent widzi że jest po sprawie, ma tylko zaaplikować.
+(C) Hybrid: setTodo zostaje QUESTION ale dodaje property :USER-CHOICE: B — sygnał dla agenta, ale wciąż widoczne że czeka na obsługę.
+
+Rekomendacja: (C). Powody: (i) nie traci się informacji że to było pytanie; (ii) agent widzi gotową decyzję bez czytania całego inbox; (iii) property łatwo czyścić po zaaplikowaniu (wraz z setTodo DONE).
+
+Krok 3 — sygnał do agenta:
+Spójne z [[n52]] (kiedy agent czyta inbox): TUI nic nie pushuje do agenta proaktywnie; przy następnej sesji/wezwaniu agent widzi inbox count + zaaplikuje. Jeśli user chce natychmiast — w czacie "obsłuż n49".
+
+Edge case: user wybrał, ale potem chce zmienić. Wpis w inbox nie został jeszcze obsłużony — może go usunąć (delete na wpisie inbox) i wcisnąć inny klawisz na QUESTION (TUI nadpisuje property :USER-CHOICE: i tworzy nowy wpis inbox). Jeśli już obsłużony — zwykły flow zmiany planu.
+*** QUESTION Co gdy user nie wybiera A/B/C tylko chce inaczej
+:PROPERTIES:
+:ID: n68
+:END:
+Realistyczny scenariusz: user czyta opcje i ma trzecią drogę (kombinacja A+B, modyfikacja B, "żadna z tych — zrób X").
+
+Rekomendacja: dedykowany klawisz dla "Other / własne". Np. O lub /:
+- Otwiera quick-input (jednoliniowy edytor jak addChild) z promptem "Twoja odpowiedź na nNN:".
+- Po zatwierdzeniu Enter: tworzy wpis w [[n49]] z title "Decyzja n_NN: <wpisany tekst>", notes może być pusty.
+- QUESTION dostaje property :USER-CHOICE: custom (zamiast A/B/C).
+
+Dodatkowo: dla każdej QUESTION zawsze dostępny jest klawisz Q (defer) — "nie teraz, wrócę później" — który nic nie robi (po prostu przewija dalej). Bez tego user może czuć presję żeby coś wybrać natychmiast.
+
+Powiązane: [[n34]] dashboard QUESTION — w trybie batch decyzji "Other" jest tym, co realnie zatrzymuje flow (wymaga wpisania tekstu), więc warto rozważyć czy w dashboardzie "Other" przenosi w tryb single-question.
+*** QUESTION Relacja z klawiszem R z n32 — kiedy R, kiedy A/B/C
+:PROPERTIES:
+:ID: n69
+:END:
+[[n32]] mówi: R = akceptacja "Rekomendacji" z notes (rename + DONE w jednym ruchu). To była wizja dla QUESTION typu binary ("zrobić X? / Rekomendacja: tak").
+
+Ten feature dodaje multi-choice (A/B/C/...). Pytanie: czy R wciąż istnieje osobno, czy zostaje wchłonięte?
+
+Opcje:
+(A) R = "zaakceptuj rekomendację" działa dla obu przypadków:
+    - QUESTION z jedną sugestią "Rekomendacja: tak/nie/zrób X" → R wykonuje.
+    - QUESTION z opcjami A/B/C i notatką "Rekomendacja: opcja B" → R = równoważne wciśnięciu B.
+(B) R i A/B/C koegzystują rozłącznie — R tylko dla binary, A/B/C tylko dla multi-choice. Parser decyduje który tryb aktywny.
+
+Rekomendacja: (A). R = uniwersalny "ufam ci, zrób co rekomendujesz". Mentalnie spójne: jedna konwencja "wpisuję 'Rekomendacja: ...' w notes, user ma R do akceptacji". Multi-choice tylko rozszerza co może być rekomendowane (od "tak/nie" do "opcja B"). Implementacja: parser szuka "Rekomendacja: opcja X" lub "Rekomendacja: <tekst>" — w pierwszym wypadku symuluje wybór X, w drugim — to co dziś n32.
+*** QUESTION Parser może źle zinterpretować notes nie będące opcjami :risk:
+:PROPERTIES:
+:ID: n70
+:END:
+Ryzyko false positive: notes zawiera "(A) coś tam" jako cytat / dygresję / przykład, parser pokazuje opcje gdzie ich nie ma, user wciska A → tworzy się wpis w inbox dla "wyboru" którego nigdy nie było.
+
+Mitygacje (kombinujemy):
+1. Strict format z dedykowaną sekcją "Opcje:" (rekomendacja z n65) — eliminuje 90% false positives.
+2. Wymóg minimum 2 opcji żeby parser uznał że to multi-choice (samotne "(A)" w środku tekstu nie aktywuje trybu).
+3. Wszystkie opcje muszą być w jednym ciągłym bloku linii (przerwa = koniec listy opcji).
+4. Wizualne potwierdzenie przed zapisem do inbox: po wciśnięciu A pokaż na 1s "Wybrano A. Enter=potwierdź, Esc=anuluj" — daje sekundę na cofnięcie.
+
+Rekomendacja: 1+2+3 obowiązkowo, 4 opcjonalnie (może być irytujące jeśli user już ufa). Domyślnie 4 włączone, klawisz w settings żeby wyłączyć dla power-userów.
+** PROPOSAL Agent-inbox + blokada add na root/N-poziomach — twardy hamulec na scope creep ze strony agenta
+:PROPERTIES:
+:ID: n71
+:END:
+Symetria do [[n49]] (user-inbox), ale w drugą stronę. Cel: zmusić mnie do triage zanim wrzucę pomysł do struktury planu.
+
+Problem dziś: gdy mam pomysł, mam dwie ścieżki — (1) wrzucić jako top-level lub child gdzieś "tam pasuje", (2) wspomnieć w czacie. (1) to scope creep. (2) ginie. Brakuje trzeciej: "miejsce parking dla pomysłów które nie zasłużyły jeszcze na strukturalne miejsce".
+
+Mechanizm — trzy filary:
+
+1. **Agent-inbox** (osobny węzeł, np. n_AI). Wrzucam tam pomysły które:
+   - Nie pasują do żadnego istniejącego rodzica.
+   - Są poniżej importance threshold zadanego przez usera.
+   - Nie mam pewności gdzie powinny trafić.
+
+2. **Importance threshold** trzymany przez MCP server. User ustawia (np. setThreshold(7) skala 1-10 lub "high"/"medium"/"low"). MCP echo'uje threshold w każdej odpowiedzi tool/resource (jak ambient `selection`) — nie mogę "zapomnieć". Pomysł poniżej thresholdu → musi iść do agent-inbox.
+
+3. **Blokada add na poziomie roota i N poziomów w dół.** MCP odrzuca `add(parentId=root, ...)` (i głębiej do depth N) z błędem "Use agent-inbox or escalate to user — depth-locked". User ma osobny tool/klawisz żeby tymczasowo odblokować ("user-grant: dodaj jako top-level").
+
+Wynik: nawet jeśli moja heurystyka importance zawiedzie, twarda blokada strukturalna nie pozwoli mi rozsadzić planu. Pomysł trafia do agent-inbox, user widzi tam wszystko co pomyślałem, sam decyduje co promować do struktury.
+
+Decyzje fundamentalne — patrz dzieci. Spina się z [[n50]] (RS audyt nie powinien być triggerowany przez śmieci z mojej głowy), [[n34]] (dashboard mógłby pokazywać też agent-inbox), [[n49]] (symetria).
+*** QUESTION Gdzie agent-inbox w drzewie — top-level czy pod meta?
+:PROPERTIES:
+:ID: n72
+:END:
+Opcje:
+(A) Top-level (siostra [[n49]] user-inbox). Symetria czytelna: "n49 = ode mnie do agenta, n_AI = od agenta do mnie". Łatwo znaleźć.
+(B) Pod wspólnym meta-węzłem "Inboxes" zawierającym n49 + n_AI. Niżej noise w drzewie, ale dodatkowy poziom hierarchii.
+(C) Pod każdym sub-rootem osobny lokalny agent-inbox (n30 ma swój, n50 ma swój). Lokalność = pomysł "o n50" wpada do agent-inbox n50, nie globalnego. Ale: rozproszenie utrudnia review.
+
+Rekomendacja: (A). Symetria z n49 jest mocna mentalnie. Globalny inbox = pojedyncze miejsce do review przez usera ("co mi się dziś rzuciło"). Komplikacja (C) (lokalność) może być post-hoc tagiem w notes ("dotyczy n50") zamiast osobnej struktury.
+
+Konwencja nazwy: "Agent-inbox — pomysły do triażu od agenta" (mirror [[n49]]).
+*** QUESTION Importance threshold — skala, jak ustawiać, jak agent ocenia
+:PROPERTIES:
+:ID: n73
+:END:
+Dwa wymiary do zdecydowania:
+
+A) Skala thresholdu (co user ustawia):
+- (i) Liczba 1-10 (precyzyjnie ale trudniej skalibrować "co znaczy 7").
+- (ii) Słowa: low / medium / high / critical (mniej precyzyjne ale natychmiast czytelne).
+- (iii) Hybrid: 4 poziomy z opisami ("low = ciekawostka", "high = blokuje decyzję").
+
+Rekomendacja: (ii) z 4 poziomami. Konkretne i pamiętalne. User ustawia `setThreshold("high")` raz na sesję, MCP echo'uje w każdym responsie.
+
+B) Jak agent ocenia importance własnego pomysłu:
+Heurystyka samoocenowa:
+- critical: blokuje aktualne zadanie, nieuwzględnione = fatal.
+- high: znacząco zmienia decyzję/architekturę, ale można pracować bez tego.
+- medium: ulepsza/uściśla istniejący kierunek.
+- low: ciekawostka, dygresja, alternatywa do rozważenia "kiedyś".
+
+Default agent = low (konserwatywnie). Pomysł > threshold → agent może dodać do struktury jeśli pasuje (lub user-grant). Pomysł ≤ threshold → MUSI iść do agent-inbox.
+
+Edge: gdy nie potrafię ocenić — domyślnie low (= agent-inbox). Bezpieczniej dla scope.
+*** PROPOSAL MCP server śledzi threshold — echo w każdej odpowiedzi
+:PROPERTIES:
+:ID: n74
+:END:
+Implementacja:
+- Property na root :IMPORTANCE-THRESHOLD: high (persystowane w pliku org).
+- MCP tool `setThreshold(level)` i `getThreshold()`.
+- Każda odpowiedź tool/resource z MCP zawiera nowe pole `threshold: "high"` (analogicznie do `selection`).
+- SERVER_INSTRUCTIONS zawiera akapit: "Always check `threshold` in responses. Ideas below threshold MUST go to agent-inbox via `addToAgentInbox(...)`. Do not call `add(...)` for them."
+
+Rezultat: nawet po reset kontekstu / kompresji / nowej sesji widzę threshold przy pierwszym MCP call. Nie muszę pamiętać.
+
+Domyślny threshold przy nowym pliku: "medium". User może obniżyć ("low" = wszystko OK do struktury, agent-inbox prawie pusty) lub podnieść ("critical" = tylko fatal idą do struktury, reszta do inbox).
+*** QUESTION Blokada add — głębokość N, zakres, bypass
+:PROPERTIES:
+:ID: n75
+:END:
+Trzy decyzje:
+
+A) Co dokładnie blokujemy:
+- (i) Tylko add z parentId="root" (samo top-level).
+- (ii) Top-level + N poziomów (user-konfigurowalne, np. 2 = root i jego dzieci).
+- (iii) Cała ścieżka od roota do węzła z `:OPEN-FOR-AGENT: t` property — agent może dodawać tylko poniżej wyraźnie otwartych miejsc.
+
+Rekomendacja: (ii) z konfigurowalnym N (default 1 = tylko root, czyli minimum). User może podnieść do 2-3 dla planów gdzie chce dyscypliny też na pod-tematach. Property :ADD-LOCK-DEPTH: N na rooсie.
+
+B) Co znaczy blokada:
+- Hard: MCP zwraca error "depth-locked, use agent-inbox or request user-grant". Agent nic nie wymusza.
+- Soft: ostrzeżenie w response, ale add przechodzi. Agent ma decydować.
+
+Rekomendacja: Hard. Cały sens to strukturalne uniemożliwienie, nie apel do dobrej woli.
+
+C) Bypass — kiedy agent może legalnie:
+- User-grant: tool `grantAddPermission(parentId, ttlSeconds=60)` — user wykonuje, MCP zapamiętuje na N sekund że agent ma jednorazowy(/krótkoterminowy) grant na ten parent.
+- Explicit user prompt w czacie "dodaj jako top-level X" — agent woła grant + add. User widzi w response confirmation.
+- Agent NIGDY nie grantuje sam sobie.
+
+Rezultat: ścieżka pomysł→struktura zawsze przechodzi przez user (grant lub triage z agent-inbox).
+**** PROPOSAL Trzeci tryb bypass: synchroniczny modal potwierdzenia w TUI
+:PROPERTIES:
+:ID: n79
+:END:
+Dodatkowa opcja do hard block + grant (nie zamiast). Gdy agent woła `add` na zablokowanym poziomie, plan-tree TUI wyświetla modal:
+
+```
+Agent chce dodać: "Tytuł..."
+pod: nXX (level 2)
+[A]ccept  [T]riage (agent-inbox)  [R]eject
+```
+
+User wciska klawisz, MCP zwraca:
+- A → add przechodzi normalnie, agent dostaje success.
+- T → add przekierowane do agent-inbox z notatką "user redirected from level 2", agent dostaje success z innym parentId i instrukcją żeby zaktualizować swój kontekst.
+- R → MCP zwraca error z actionable hint ("user rejected. Rationale (jeśli user dopisał): ...").
+
+Pytanie o timeout — patrz notes użytkownika:
+- MCP musi mieć własny timeout krótszy niż timeout tool calla agenta. Default proponowane: 30s w MCP, agent typowo ma ~60s — daje bufor.
+- Po timeout MCP zwraca default akcję — opcje:
+  (i) Hard block ("brak reakcji = nie wolno", agent dostaje error i idzie do agent-inbox sam).
+  (ii) Auto-triage do agent-inbox (best-effort, user może promować później).
+
+Rekomendacja: (ii). Powód: agent NIE traci pomysłu (jest w agent-inbox), user nic nie traci (zobaczy go potem), nikt nie był blokowany dłużej niż 30s. Hard block po timeoutie karze obie strony za to że user był zajęty.
+
+Tryb modal jest opt-in per parentId/depth:
+- Property `:CONFIRM-ADD: t` na konkretnym rodzicu — agent add pod tym rodzicem zawsze pyta.
+- Globalnie: `:ADD-CONFIRM-DEPTH: N` na rooсie — analogicznie do `:ADD-LOCK-DEPTH:`.
+
+Kombinacja z hard lock: jeśli oba ustawione, lock wygrywa (modal nie pokazany, error od razu). Jeśli tylko confirm — modal się pokazuje. Jeśli tylko lock — bez modalu.
+
+Edge case: agent dodaje batch (np. rozpakowuje QUESTION na 5 children). Modal per child = 5 pytań = nuke productivity. Mitigation: gdy agent woła `add` w krótkim oknie (np. <2s od poprzedniego), modal oferuje dodatkowo `[S]kip rest (auto-accept this batch)` — user raz akceptuje całą falę.
+
+Powiązane: [[n67]] (wpis w inbox z wyborem A/B/C) używa identycznego mechanizmu modal+klawisz — warto zunifikować komponent UI.
+*** PROPOSAL Format wpisu w agent-inbox
+:PROPERTIES:
+:ID: n76
+:END:
+Rekomendacja: każdy wpis to child agent-inboxa z:
+- title: jedna linia, esencja pomysłu (jak ja bym napisał headline gdyby pomysł trafił do struktury).
+- TODO: PROPOSAL (sygnał "do rozważenia") lub QUESTION (jeśli to wymaga decyzji żeby przejść dalej).
+- notes: blok składający się z:
+  - `Kontekst:` co robiłem gdy pomysł się pojawił (np. "podczas rozwijania n50 — protokół audytu RS").
+  - `Importance (self-assessed):` low/medium/high — żeby user widział czemu nie poszło do struktury.
+  - `Sugerowany rodzic:` "n50 → n61 (audyt)" lub "nowy top-level" — moja propozycja gdzie by pasowało gdyby user dopuścił.
+  - `Treść:` rozwinięcie pomysłu, dlaczego ważne, jak by się włączało.
+
+Tag :agent-inbox: dla łatwego filtra.
+
+User triage: czyta wpis, jeśli warto promować → move pod sugerowanego rodzica (lub inne miejsce), zmienia TODO na właściwy stan. Jeśli nie warto → delete albo setTodo DROPPED.
+
+Symetria z [[n49]] formatem: tam user pisze luźno, tu ja piszę strukturalnie. Asymetria celowa: ja mam więcej tokenów na meta-info, user ma maksymalną wygodę wrzucania.
+*** QUESTION Blokada może blokować legit dodawanie struktury gdy plan rośnie :risk:
+:PROPERTIES:
+:ID: n77
+:END:
+Scenariusz: user przychodzi z prawdziwie nowym dużym pomysłem ("dodajmy cały moduł X"), oczekuje że pomogę go rozłożyć. Naturalna pierwsza akcja = `add(parentId=root, title="Moduł X", ...)`. Blokada → friction.
+
+Mitygacje (kombinujemy):
+1. Komunikat MCP w erorze jest actionable: "depth-locked. Use `grantAddPermission('root')` to unlock for 60s, or address user." Nie tylko "denied".
+2. Heurystyka: gdy user w czacie explicit napisał "dodaj/zacznijmy/zaplanujmy X" — agent automatycznie woła grant (single-shot) i potem add. User widzi confirmation.
+3. Skrót dla usera: klawisz w TUI "G" (grant next agent add) lub "U" (unlock for session) — daje grant tymczasowy bez przechodzenia przez MCP tool.
+4. Default add-lock-depth = 1 (tylko root). Większość praktycznych add'ów (children pod istniejące pod-rooty) działa bez friction. Tylko top-level wymaga grant.
+
+Rekomendacja: zacząć z (1)+(2)+(3) wbudowane, default = 1. Po tygodniu używania kalibracja czy podnieść depth.
+*** QUESTION Jak agent triage'uje własny agent-inbox
+:PROPERTIES:
+:ID: n78
+:END:
+Po czasie agent-inbox spuchnie. Kto sprząta?
+
+Opcje:
+(A) Tylko user — agent wrzuca, user decyduje. Czysta separacja ról.
+(B) Agent może sam promować z agent-inbox do struktury, jeśli na nowo oceni że importance > threshold, lub gdy okoliczności się zmieniły (powstał nowy rodzic do którego pomysł pasuje).
+(C) Agent może sam usuwać własne wpisy (DROPPED) jeśli stwierdzi że pomysł stracił aktualność.
+
+Rekomendacja: (A) + ograniczone (B) i (C):
+- (B) tylko za explicit user prompt "przejrzyj agent-inbox, promuj co warto" — agent przegląda, proponuje, ale user akceptuje przed move.
+- (C) tylko za explicit "wyczyść agent-inbox z nieaktualnych" — agent flaguje (np. setTodo DROPPED z notatką dlaczego), user dopiero delete'uje.
+
+Powód: cały sens agent-inbox to żeby user widział co mi się rzuciło. Cichy auto-prune niwelowałby wartość audytową.
+
+Powiązane: [[n34]] (dashboard QUESTION) — analogiczny dashboard "co mi się rzuciło ostatnio" dla agent-inbox.
+** PROPOSAL Inspiracje z konkurencji — co warto przejąć
+:PROPERTIES:
+:ID: n80
+:END:
+Wynik przeglądu sąsiednich narzędzi (org-mcp, OpenAgentsControl, GTD Triage Skill, Botference, Augment 5-layer safety, Microsoft Copilot Studio, artykuł Tima O'Briena o scope creep). Ranking po ROI w dzieciach niżej.
+
+Zasada: każdy z tych pomysłów istnieje w jakimś toolu w izolacji. Wartość plan-tree = kompozycja w spójny system dyscypliny. Te propozycje wzmacniają tę kompozycję, nie ją rozpraszają.
+*** PROPOSAL Auto-snapshoty pliku org przy każdej istotnej mutacji
+:PROPERTIES:
+:ID: n81
+:END:
+Inspiracja: [org-mcp](https://github.com/laurynas-biveinis/org-mcp). Sami autorzy mówią "raz na 1000 wywołań LLM **spróbuje usunąć wszystko**" i rekomendują backupy.
+
+Implementacja:
+- Przy każdej mutacji (post-autosave) zapisz kopię do `.plan-tree/snapshots/<ISO-timestamp>.org`.
+- Retention policy: ostatnie 50 mutacji lub 7 dni (whichever larger).
+- Tool MCP `listSnapshots()` + `restoreSnapshot(timestamp)` żeby agent (na user prompt) mógł cofnąć.
+- TUI hotkey np. `Ctrl+R` otwiera listę snapshotów z preview + restore.
+
+Granica wartościowości: snapshoty mają sens dla mutacji destruktywnych (delete, absorb, merge) i strukturalnych (move dużych poddrzew). Dla pojedynczego setTodo overkill — można threshold: snapshot tylko gdy diff > N linii.
+
+ROI: tani, eliminuje główne ryzyko które org-mcp wyraźnie odpuścił. Mocny argument w pozycjonowaniu.
+*** PROPOSAL Two-phase triage dla agent-inbox (propose → user accepts → execute)
+:PROPERTIES:
+:ID: n82
+:END:
+Inspiracja: [GTD Triage Claude Code Skill](https://mcpmarket.com/tools/skills/gtd-inbox-triage). Two-phase: first agent scans inbox proposing routing+tags, second after user review agent executes.
+
+Wzmacnia [[n78]] (agent triage'uje agent-inbox).
+
+Implementacja:
+Zamiast direct execution gdy user mówi "przejrzyj agent-inbox":
+1. Phase 1 (propose): agent buduje plan w postaci listy: dla każdego wpisu z agent-inbox proponuje akcję (move pod nXX / DROPPED / promote-to-RS / etc.) z uzasadnieniem. Wynik = wpis QUESTION pod jakimś węzłem ("Propozycja triażu agent-inbox z dnia YYYY-MM-DD") z bullet list per item.
+2. User review: czyta, akceptuje/odrzuca/modyfikuje pojedyncze pozycje.
+3. Phase 2 (execute): po akceptacji agent wykonuje moves/deletes. QUESTION → DONE z notatką wynikową.
+
+Granica: dla agent-inbox z 1-2 wpisami overkill. Auto-tryb dla małych batchy (≤2), two-phase dla większych.
+
+Spina się z [[n67]] (USER-CHOICE property) — phase 2 może czytać tę property z propozycji, agent wie co user wybrał.
+
+ROI: bez tego mam carte blanche obsługi inbox = ryzyko cichego scope shift. Z tym user widzi przed.
+*** PROPOSAL Persistent approval / "remember choice" dla modalu n79
+:PROPERTIES:
+:ID: n83
+:END:
+Inspiracja: [Augment 5-layer safety](https://www.augmentcode.com/guides/ai-agent-workflow-implementation-guide) — "runtime approval system with persistent permissions".
+
+Rozszerzenie [[n79]] (modal potwierdzenia):
+
+Obecnie modal ma 3 opcje: [A]ccept / [T]riage / [R]eject. Dodać: `[A!] accept and remember`. Po wybraniu user dostaje sub-prompt:
+- Remember for: this session / 1 hour / always (until I revoke)
+- Pattern: dokładnie ta operacja / wszystkie add pod tym samym parentem / wszystkie add tego samego typu (np. PROPOSAL pod n30) / wszystko z tego źródła
+
+Implementacja:
+- Tool MCP `getGrants()` zwraca aktywne permissions.
+- TUI panel/hotkey `Ctrl+G` pokazuje listę permissions z możliwością revoke.
+- Property na root `:GRANTS:` z JSON-em (lub osobny plik `.plan-tree/grants.json` jeśli rozrasta się).
+
+Granica: zbyt szerokie pattern (np. "wszystkie add zawsze") niweluje cały sens blokady. Modal powinien pre-fokusować na "this pattern" zamiast "always".
+
+ROI: bez tego modal staje się drażniący przy powtarzających się decyzjach tego samego typu. Z tym — adaptacja do twojej rzeczywistej tolerancji.
+*** PROPOSAL User-defined lifecycle hooks (on-promote-to-RS, on-conflict, on-add)
+:PROPERTIES:
+:ID: n84
+:END:
+Inspiracja: [Augment 5-layer safety](https://www.augmentcode.com/guides/ai-agent-workflow-implementation-guide) — "user-defined lifecycle hooks".
+
+Mechanizm: user definiuje hooki w `.plan-tree/hooks.json` (lub w settings):
+```json
+{
+  "on-promote-to-rs": ["trigger-audit", "notify-statusbar"],
+  "on-conflict-rs-rs": ["open-modal", "pause-agent-actions"],
+  "on-add-to-agent-inbox": ["increment-counter", "log-to-file"],
+  "on-grant-revoke": ["audit-recent-adds"]
+}
+```
+
+Każdy hook = nazwa eventu + lista akcji. Akcje wbudowane (trigger-audit, notify-statusbar, log-to-file, ...) + custom (shell script).
+
+Wartość: plan-tree staje się konfigurowalnym frameworkiem zamiast hardcoded behaviors. Userzy z różnymi metodykami pracy mogą dostosować.
+
+Większy lift (event system + dispatch + dokumentacja hooków), ale otwiera plug-in ekosystem.
+
+Granica: hooki muszą być atomic i bez side effects na drzewie (poza wyraźnymi akcjami). Niedozwolone: hook który mutuje drzewo cicho — to znowu produkuje scope creep, tylko teraz od strony hooków.
+
+Powiązane: [[n75]] (blokada add) — hooki mogą np. logować każdy reject.
+
+ROI: opóźniony. Większa wartość dopiero gdy plan-tree ma >1 użytkownika i różne workflow.
+*** PROPOSAL Configurable TODO/tag dictionary per plik (czytaj org-mode #+TODO:)
+:PROPERTIES:
+:ID: n85
+:END:
+Inspiracja: [org-mcp](https://github.com/laurynas-biveinis/org-mcp) — eksponuje `org-get-todo-config` / `org-get-tag-config`. Org-mode natywnie pozwala na per-file deklarację:
+```
+#+TODO: TODO DOING REVIEW | DONE DROPPED
+#+TAGS: invariant proposal question decision risk @work @home
+```
+
+Dziś plan-tree ma hardcoded TodoStates w `src/types.mts`: TODO/PROPOSAL/QUESTION/WORK-UNIT/DROPPED/DONE. Userzy z innym workflow (czysty Kanban: BACKLOG/DOING/DONE; GTD: NEXT/WAITING/SOMEDAY/DONE) muszą forkować.
+
+Implementacja:
+- OrgReader parsuje `#+TODO:` z headera pliku (lub używa defaultu jeśli brak).
+- MCP `getTodoConfig()` / `getTagConfig()` zwracają aktualną konfigurację — agent się dostosowuje.
+- Walidacja w add/setTodo: state musi być w aktualnym vocab.
+- TUI cycle (`t`) cyklujе po obecnej sekwencji, nie hardcoded.
+
+Granica: niektóre semantic features plan-tree zakładają konkretne stany (QUESTION → R = accept recommendation, DONE = ukrywane filtrem). Trzeba zmapować — user definiuje "który stan jest pytaniem" / "który stan jest done" przez sub-property (`#+TODO_QUESTION: QUESTION`).
+
+ROI: średni. Otwiera adoption dla użytkowników z istniejącym workflow. Wzmacnia "kanoniczność pliku" — plan-tree nie narzuca swoich konwencji.
+*** PROPOSAL Scope-creep checklist template w notes nowych PROPOSAL
+:PROPERTIES:
+:ID: n86
+:END:
+Inspiracja: [Tim O'Brien — Meet the Scope Creep Kraken](https://medium.com/@tobrien/meet-the-scope-creep-kraken-b7190814fe5c). Kluczowy cytat: "ask what each new feature does to testing, documentation, support, and the team's ability to explain the system".
+
+Implementacja:
+Gdy agent woła `add(todo="PROPOSAL", parentId=X)` i X jest "feature-rodzicem" (heurystyka: parent ma w title słowa "feature"/"funkcja" lub tag :feature:), MCP automatycznie wstawia do notes (przed agentowymi notes) szablon:
+
+```
+**Scope check** (uzupełnij zanim przeniesiesz do struktury):
+- Testy: [?]
+- Dokumentacja: [?]
+- Support / koszt eksploatacji: [?]
+- Czy potrafię to wytłumaczyć w 1 zdaniu: [?]
+```
+
+Agent (lub user przy promocji) wypełnia. Niewypełnione `[?]` blokują promocję z agent-inbox do struktury.
+
+Granica: dla wpisów technicznych (QUESTION, RISK) checklista jest zbędna — tylko PROPOSAL.
+
+Wariant lekki (bez blokowania): checklist jest sugestią w statusbarze ("PROPOSAL n_NN nie ma uzupełnionej scope-check"), nie hard wymogiem.
+
+Spina się z [[n71]] (agent-inbox jako triage station): scope check to mechanizm który **podnosi** wymóg jakości na samym wejściu, nie czeka aż user zauważy że pomysł jest niedopracowany.
+
+ROI: micro-feature, duży wpływ ergonomiczny. Wymusza ode mnie ustosunkowanie się do kosztów zanim wrzucę pomysł.
+* PROPOSAL Anchors — punkty nietykalne przez agenta, kotwica dla reszty planu
+:PROPERTIES:
+:ID: n40
+:END:
+Mechanizm twojej kontroli: węzły oznaczone jako anchor są chronione przed mutacją ze strony agenta (rename, setTodo, setNotes, delete, move, extract, absorb, split). Każda taka mutacja jest odrzucana z jasnym komunikatem.
+Cel: dasz mi swobodę restrukturyzacji większości planu, ale ZA­KOTWICZONE punkty są dane wejściowe — agent musi się do nich dostosować, nie one do agenta.
+Różni się od FROZEN: FROZEN = "teraz pauza, później wrócimy". ANCHOR = "ta wartość/struktura zostaje, niezależnie od trybu pracy".
+Powiązane z n30 (QoL), ale ważniejsze — to nie usprawnienie, to mechanizm kontraktu user/agent. Dlatego osobny top-level.
+** Mechanizm: property :ANCHOR: t (analogicznie do :FROZEN:)
+:PROPERTIES:
+:ID: n41
+:END:
+Reuse istniejącej infrastruktury properties drawer. Bez nowego TodoState — anchor jest ortogonalny do todo (anchor TODO, anchor DONE, anchor QUESTION — wszystkie sensowne).
+** MCP tools: anchor(itemId) / unanchor(itemId) — wrappery nad setProperty/removeProperty
+:PROPERTIES:
+:ID: n42
+:END:
+Analogicznie do freeze/unfreeze. Wrappery dają semantykę + jednoznaczny audit. Unanchor mogą wywołać OBA (user i agent) — patrz pytanie n47 jeśli to ma być asymetryczne.
+** Egzekucja: każda mutacja TreeOperations sprawdza ANCHOR przed zastosowaniem
+:PROPERTIES:
+:ID: n43
+:END:
+W mutateItem (i analogicznych miejscach): jeśli target.properties.get('ANCHOR') === 't' → return {success:false, message:'Item nN is anchored; unanchor first to modify'}. Operacje strukturalne (split/merge/extract/absorb/delete/move) — analogicznie.
+Wyjątki: setProperty/removeProperty na klucz ANCHOR — muszą działać, bo to jedyna ścieżka unanchor. Albo anchor/unanchor jako dedykowane tools omijają guard.
+To zmiana behawioralna — wszystkie istniejące testy muszą wciąż przechodzić (większość operuje na nie-anchored).
+** TUI: klawisz toggle (np. Shift+A) + render (📌 prefix + bold)
+:PROPERTIES:
+:ID: n44
+:END:
+Klawisz Shift+A na focusowanym → wywołuje anchor (lub unanchor jeśli już zakotwiczony). StatusBar feedback "Anchored n42" / "Unanchored n42".
+Render: prefix 📌 w prefixie wiersza (przed ❄ / ! / · / mark), bold attribute na title. Spójne z paletą priorytetów (akcent+neutral) i question (cyan).
+Może też: kolor border panela inny gdy focus na anchor — dla bezpieczeństwa wizualnego.
+** SERVER_INSTRUCTIONS: opis anchorów dla agenta — kontrakt
+:PROPERTIES:
+:ID: n45
+:END:
+Linia w instructions: "Items with :ANCHOR: t in their properties are user-locked. Mutating them (rename/setTodo/setNotes/move/delete/etc.) will fail. Treat anchored items as inputs to your reasoning — design your proposals AROUND them, not over them. If you genuinely need to change an anchored item, surface that need to the user explicitly — never attempt to unanchor silently."
+Plus: tree://summary i find dostaną pole `anchored: true` dla zakotwiczonych — żeby agent widział od razu.
+** QUESTION Zakres egzekwowania: tylko anchor sam czy też jego dzieci?
+:PROPERTIES:
+:ID: n46
+:END:
+Opcje:
+(A) Tylko sam anchor jest chroniony — dzieci anchora można dowolnie zmieniać. Prostsze, ale anchor "naprawa autoryzacji" mógłby mieć zmieniane dzieci przez agenta — sens?
+(B) Anchor i całe poddrzewo chronione — żelazna kotwica. Ale zmniejsza elastyczność (anchor wysoko → ogromny obszar zamrożony).
+(C) Anchor pływający — tylko bezpośrednie pole title/notes/todo węzła, ale agent może DODAWAĆ dzieci, MOVE-ować je. Tak żeby anchor był "punktem orientacyjnym" a nie zamrożeniem poddrzewa.
+(D) Dwa rodzaje: anchor-self (tylko węzeł) i anchor-subtree (poddrzewo) — najelastyczniej, ale więcej kompleksu.
+Rekomendacja: (C) jako default, plus opcjonalny tag :anchor-subtree: dla rzadkich przypadków pełnego zamrożenia.
+** QUESTION Czy agent może unanchor na explicit user request, czy tylko user?
+:PROPERTIES:
+:ID: n47
+:END:
+Opcje:
+(A) Tylko user może unanchor (przez TUI Shift+A) — agent fizycznie nie ma tool unanchor. Najczystsze ale wymaga ode mnie przy każdej kolizji zatrzymania pracy i poproszenia ciebie o unanchor.
+(B) Agent może wywołać unanchor zawsze (tool MCP) — wygodne ale podważa cały sens "nietykalne".
+(C) Agent może unanchor TYLKO w odpowiedzi na explicit user request w rozmowie — kontrakt protokołu. Polega na mojej dyscyplinie, nie egzekwowane przez kod.
+(D) Wzorzec consent: agent prosi przez tool requestUnanchor(itemId, reason), TUI pokazuje dialog "Claude wants to unanchor nN: <reason> — allow?" — wymaga dialog widget w TUI.
+Rekomendacja: (A) na start — minimalne ryzyko, naturalna eskalacja do ciebie. (D) jako future enhancement gdy okaże się że zbyt często cię o to pytam.
+*** (new)
+:PROPERTIES:
+:ID: n48
+:END:
+* Inbox — skrótowe notatki ode mnie, agent rozwija i przenosi
+:PROPERTIES:
+:ID: n49
+:END:
+Jedno miejsce, gdzie wrzucam jednolinijkowe myśli/pomysły/feedbacki w trakcie pracy — bez zastanawiania się gdzie pasują w strukturze. Agent (Claude) jest odpowiedzialny za triage: czyta każde dziecko n49, rozumie intencję, uzupełnia szczegóły, przenosi pod właściwego rodzica w drzewie.
+
+Założenie: tempo dorzucania > tempo strukturyzowania. Inbox jest zaworem bezpieczeństwa przeciw "zapomniałem, bo nie miałem gdzie tego wrzucić".
+
+Po przeniesieniu wpis znika z inbox sam (move = zmiana rodzica). Inbox jest pusty = wszystko obsłużone.
+
+Protokół i decyzje — patrz dzieci.
+** PROPOSAL Format wpisu — title = jedna myśl, notes opcjonalne
+:PROPERTIES:
+:ID: n51
+:END:
+Rekomendacja: title to dosłownie to, co user wpisze (krótka myśl), bez wymuszania struktury. Notes opcjonalne — jeśli user dorzuci kontekst, super; jeśli nie, agent dopytuje albo zgaduje.
+
+Bez TODO state na nowych wpisach (default TODO jest OK) — agent nadaje właściwy stan przy triażu (QUESTION jeśli to pytanie do agenta, PROPOSAL jeśli to pomysł na funkcję, RISK jeśli ostrzeżenie, itd.).
+
+Alternatywa odrzucona: wymuszanie prefiksów typu "Q: ...", "P: ..." — zwiększa friction wrzucania, niwelując sens inbox.
+** QUESTION Kiedy agent czyta inbox?
+:PROPERTIES:
+:ID: n52
+:END:
+Opcje:
+(A) Tylko na explicit "przejrzyj inbox" / "obsłuż n49".
+(B) Proaktywnie — na początku każdej dłuższej sesji agent sprawdza czy są dzieci n49 i pyta czy obsłużyć.
+(C) Hybrid: agent sygnalizuje obecność wpisów ("masz 3 rzeczy w inbox"), ale nie obsługuje bez zgody.
+
+Rekomendacja: (C). User zachowuje kontrolę nad timingiem (czasem inbox to "później, nie teraz"), ale nie zapomina że tam coś leży. Wymaga ode mnie 1 zdania na początku sesji typu "n49 ma 3 nowe wpisy" — minimal friction.
+** PROPOSAL Protokół przetwarzania pojedynczego wpisu
+:PROPERTIES:
+:ID: n53
+:END:
+Rekomendowany cykl per wpis:
+1. Read title + notes.
+2. Klasyfikuj: task/proposal/question/risk/feedback/decyzja-do-podjęcia/duplikat-czegoś-co-już-jest.
+3. Znajdź właściwego rodzica w drzewie (find po słowach kluczowych, sprawdź czy istnieje podobny węzeł).
+4. Jeśli duplikat / rozwinięcie istniejącego: absorb pod istniejący węzeł (zachowaj oryginał usera w notes).
+5. W innym wypadku: rename (rozwiń skrót do pełnego zdania), setTodo (właściwy stan), setNotes (dodaj kontekst/rekomendację/uzasadnienie), opcjonalnie addTag, na końcu move pod właściwego rodzica.
+6. Po move wpis znika z inbox — done.
+
+Zasada zachowania: nigdy nie usuwaj oryginalnego brzmienia usera. Jeśli rename zmienia title — wrzuć oryginał do notes jako "Oryginał z inbox: ..." żeby user mógł zweryfikować że interpretacja jest OK.
+
+Powiązane: [[n31]] (stan ASSUMED) — przeniesienie pod nowy temat powinno być ASSUMED dopóki user nie potwierdzi.
+** QUESTION Co gdy wpis to pytanie/feedback dla agenta, nie task?
+:PROPERTIES:
+:ID: n54
+:END:
+Przykład wpisu: "ciekawi mnie czy klawisz R z n32 miałby konflikt z 'r' jako rename?".
+
+To nie task — to pytanie do mnie wymagające odpowiedzi tekstowej, nie ruchu w drzewie.
+
+Rekomendacja: agent odpowiada w czacie + wrzuca odpowiedź jako notes do tego wpisu, zmienia title na bardziej deklaratywny ("Konflikt R/r — analiza"), setTodo QUESTION (jeśli to wciąż wymaga decyzji usera) lub DECISION (jeśli odpowiedź zamyka temat), i przenosi pod właściwego rodzica (np. n32 jeśli o klawisz R). Nie zostawiaj w inbox — inbox jest staging area, nie archiwum.
+** QUESTION Agent może źle zinterpretować skrótową notatkę i ulokować ją w złym miejscu :risk:
+:PROPERTIES:
+:ID: n55
+:END:
+Im krótszy wpis, tym większa szansa na błędną interpretację. Skutek: wpis ląduje pod złym rodzicem, user nie widzi go bo nie scrolluje tam, kontekst się gubi.
+
+Mitygacje (kombinujemy):
+1. Zawsze ASSUMED ([[n31]]) po przeniesieniu — user widzi że agent się domyślał, jeden klik cofa.
+2. W notes obowiązkowo "Oryginał z inbox: ..." + "Domysł interpretacji: ..." — user może zweryfikować rozumowanie.
+3. Przy niejasnym wpisie agent NIE przenosi — zostawia w inbox, zmienia na QUESTION z rekomendacją interpretacji w notes, czeka na 'R'.
+
+Rekomendacja: wszystkie 3 razem. Koszt: trochę więcej notes na świeżych przeniesieniach. Korzyść: user nigdy nie traci wpisu z radaru.
+* Rock-solid (RS) — konsensus dominujący, edytowalny tylko za zgodą usera
+:PROPERTIES:
+:ID: n50
+:END:
+RS i ANCHOR ([[n42]]) to ten sam mechanizm "punktów chronionych": dominują nad non-protected, triggerują audyt, konflikty między protected (ANCHOR↔ANCHOR, RS↔RS, ANCHOR↔RS) rozstrzyga user.
+
+Jedyna różnica: kto może edytować treść punktu.
+- ANCHOR: tylko user. Agent nigdy nie proponuje zmiany.
+- RS: user (zawsze) + agent (tylko za explicit zgodą — patrz [[n62]]).
+
+Wszystkie zasady niżej (dominacja nad non-protected, audyt, eskalacja konfliktów) stosują się jednakowo do ANCHOR i RS. W tekście dzieci "RS" = "RS lub ANCHOR" chyba że wyraźnie zaznaczono inaczej.
+
+Cel RS jako rozszerzenia ANCHOR: dać userowi punkty fundamentalne, które są otwarte na rewizję jeśli agent znajdzie dobry argument, ale bez ryzyka cichej zmiany. ANCHOR pozostaje opcją "nawet nie próbuj".
+
+Decyzje fundamentalne — patrz dzieci DONE. Otwarte pytania — QUESTION/PROPOSAL.
+** DONE Decyzja: konflikt protected (RS/ANCHOR) ↔ non-protected — protected wygrywa :decision:
+:PROPERTIES:
+:ID: n56
+:END:
+Gdy non-protected punkt (zwykły) jest niespójny z jakimś RS lub ANCHOR, dostosowywany jest non-protected — protected stoi. Agent nie pyta usera o pozwolenie na zmianę non-protected w tym kontekście; informuje co zrobił.
+
+Powód: protected jest definicją "tego nie negocjujemy w tym poddrzewie". Każda inna interpretacja niwelowałaby semantykę.
+
+Edge case: jeśli zmiana non-protected jest na tyle drastyczna że zmienia jego sens (trzeba go usunąć / DROPPED / przeformułować od zera) — agent przenosi non-protected w stan QUESTION z notatką "konflikt z [[nNN]] (protected), propozycja: zdroppować lub przeformułować jako X" i eskaluje do usera. Granica: zmiana mechaniczna = agent, zmiana semantyczna = user.
+** DONE Decyzja: pojawienie się nowego protected (RS/ANCHOR) triggeruje audyt non-protected :decision:
+:PROPERTIES:
+:ID: n57
+:END:
+Trigger: każde nadanie flagi RS lub ANCHOR węzłowi (świeży protected lub promocja istniejącego non-protected). Jeśli istniejący RS/ANCHOR zostaje edytowany (RS przez agenta z consent, ANCHOR przez usera) — też trigger audytu, bo zmiana ograniczeń = możliwe nowe konflikty.
+
+Akcja agenta: przejdź po wszystkich non-protected węzłach w zakresie audytu ([[n61]]), oceń spójność z nowym/zmienionym protected, dla każdego konfliktu wykonaj politykę z [[n56]]. Wynik audytu: raport w czacie ("audyt nNN: 2 konflikty rozwiązane automatycznie [nXX, nYY], 1 eskalowany [nZZ]") + tagi/notes na zmienionych węzłach żeby user mógł zweryfikować.
+** DONE Decyzja: konflikt między protected (RS↔RS, ANCHOR↔ANCHOR, RS↔ANCHOR) rozstrzyga user :decision:
+:PROPERTIES:
+:ID: n58
+:END:
+Gdy agent zauważy że dwa protected punkty (dowolna kombinacja RS i ANCHOR) są wzajemnie sprzeczne, NIE wybiera za usera. Eskaluje:
+
+- Dodaje QUESTION (np. "Konflikt protected [[nXX]] ↔ [[nYY]]") z notatką: oba teksty zacytowane, opis sprzeczności, ewentualnie propozycja rozstrzygnięcia (jeśli to RS↔RS i agent ma rekomendację — w przypadku ANCHOR agent nie sugeruje rozstrzygnięcia, czeka biernie).
+- Sygnalizuje w czacie żeby user nie przeoczył.
+- Wstrzymuje wszystkie akcje zależne od któregokolwiek z konfliktujących protected aż user rozstrzygnie.
+
+Powód: protected jest fundamentem. Cicha decyzja agenta o tym który "wygrywa" niszczy zaufanie do mechanizmu.
+** QUESTION Jak oznaczyć RS — property, tag, czy nowy keyword?
+:PROPERTIES:
+:ID: n59
+:END:
+Opcje:
+(A) Property :ROCK-SOLID: t — analogicznie do :FROZEN: t. Ortogonalne do TodoState i tagów.
+(B) Tag :rock-solid: — proste, widoczne w tytule, ale tag jest na równi z innymi (np. :invariant:) i można pomylić.
+(C) Nowy TodoState 'ROCK-SOLID' — mocno wyróżnia, ale miesza znaczenie (TODO state = status pracy, nie poziom autorytetu).
+
+Rekomendacja: (A). Wzorzec FROZEN sprawdza się ([[n14]]), parser i UI już rozróżniają property od tagów, nie miesza się z osią TodoState. Render w TreePanel: dedykowany prefiks (np. ◆) + ewentualnie border/highlight.
+
+Konsekwencja dla MCP: tool rockSolid(itemId)/unRockSolid(itemId) (analogicznie do freeze/unfreeze) + property :ROCK-SOLID: w org-mode pliku.
+** DONE Decyzja: RS vs ANCHOR — różnica tylko w edytowalności przez agenta :decision:
+:PROPERTIES:
+:ID: n60
+:END:
+User: "anchors działają tak samo jak RS — jedyna różnica jest taka, że RS może zmieniać też agent".
+
+Konsekwencje:
+- Mechanizm dominacji nad non-protected: identyczny. ANCHOR i RS oba wymuszają zgodność reszty.
+- Mechanizm audytu: identyczny. Promocja do ANCHOR triggeruje audyt tak samo jak promocja do RS.
+- Konflikty: ANCHOR↔ANCHOR, RS↔RS, RS↔ANCHOR — wszystkie eskalowane do usera ([[n58]]).
+- Edycja: ANCHOR tylko user. RS user + agent z explicit consent ([[n62]]).
+
+Praktyka: pisz większość fundamentów jako RS — daje agentowi możliwość ostrzeżenia "ten RS może być nie taki pewny jak myślisz" przez QUESTION. ANCHOR rezerwuj dla punktów gdzie nie chcesz nawet tej dyskusji (np. compliance, deadline, hard constraint biznesowy).
+** QUESTION Zakres audytu — całe drzewo czy poddrzewo?
+:PROPERTIES:
+:ID: n61
+:END:
+Gdy RS pojawia się na n42, agent audytuje:
+(A) Całe drzewo (kosztowne dla planów 100+ węzłów, ale gwarantuje spójność globalną).
+(B) Tylko poddrzewo n42 i jego rodzeństwo (tańsze, ale RS może mieć implikacje poza swoim poddrzewem).
+(C) Heurystycznie: agent na podstawie treści RS sam decyduje co jest "w pobliżu semantycznie" (np. find po słowach kluczowych z RS).
+
+Rekomendacja: (C) z fallbackiem na (A) gdy user explicit ("audytuj wszystko vs RS n42"). W praktyce: agent po promocji RS pisze w czacie "audytuję X węzłów semantycznie powiązanych", user może rozszerzyć.
+
+Argument przeciw (A) zawsze: hałas — większość węzłów nie jest powiązana z konkretnym RS, audyt zwróci pustkę dla 90%, ale pochłonie kontekst i czas.
+** PROPOSAL Protokół edycji RS za zgodą usera
+:PROPERTIES:
+:ID: n62
+:END:
+Gdy agent chce zmienić RS (bo np. pojawia się argument który ją podważa lub doprecyzowuje), NIE robi tego cicho. Cykl:
+
+1. Agent dodaje pod RS dziecko QUESTION: "Propozycja zmiany RS: <opis> — powód: <uzasadnienie>".
+2. Notes QUESTIONa zawiera: stary brzmienie, nowe brzmienie, różnica semantyczna, dlaczego wartościowe.
+3. Sygnalizuje w czacie ("proponuję zmianę RS nXX — zobacz nYY").
+4. Czeka na decyzję usera (akceptuje / odrzuca / modyfikuje).
+5. Po akceptacji: edytuje RS, QUESTION → DONE z notatką "zaakceptowane, RS zaktualizowany" + triggeruje ponowny audyt (bo zmiana RS = zmiana ograniczeń = możliwe nowe konflikty).
+
+Edge case: agent NIGDY nie obniża RS do non-RS samodzielnie. To zawsze user (przez rockSolid → unRockSolid).
+** QUESTION Render RS w TreePanel — wizualne odróżnienie
+:PROPERTIES:
+:ID: n63
+:END:
+RS musi być widoczny na pierwszy rzut oka — user powinien widzieć "to jest fundament" bez czytania notes.
+
+Opcje (kombinowalne):
+- Prefiks ◆ (diament) lub ▣ (wypełniony kwadrat) przed tytułem — analogicznie do ❄ dla FROZEN.
+- Bold tytułu.
+- Inny kolor border panelu gdy focus na RS — sygnał "uważaj, edycja wymaga zgody".
+- Sufiks " (RS)" w tytule renderowanym (nie zapisywanym).
+
+Rekomendacja: prefiks ◆ + bold tytułu. Border focus zmienia się — to wspiera ANCHOR ([[n42 wzmianka w n50 notes]]), warto zunifikować dla "punktów chronionych" (RS + ANCHOR z różnymi kolorami).
+
+Powiązane z [[n27]] (gradient kolorów priorytetów) — RS nie powinien gryźć się z paletą priorytetów [#A].
