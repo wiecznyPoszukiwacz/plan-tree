@@ -782,6 +782,7 @@ export default class TreeOperations {
       message: `Added item ${newId} under ${parentId}`,
       newTree: finalTree,
       diff: `Add: "${title}" [${todoState}] under ${parentId}`,
+      affectedId: newId,
     };
   }
 
@@ -826,11 +827,13 @@ export default class TreeOperations {
       itemsById: finalItemsById,
     };
 
+    const parentId = this.findParentId(tree, itemId);
     return {
       success: true,
       message: `Deleted item ${itemId}`,
       newTree: finalTree,
       diff: `Delete: "${item.getTitle()}" (${removedCount} item${removedCount === 1 ? '' : 's'} removed)`,
+      affectedId: parentId ?? tree.root.getId(),
     };
   }
 

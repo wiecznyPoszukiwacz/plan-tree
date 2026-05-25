@@ -45,6 +45,7 @@ export interface TreePanelActions {
   onDelete?: (item: Item) => void;
   onAddChild?: (parent: Item) => void;
   onAddSiblingAfter?: (sibling: Item) => void;
+  onAddSiblingBefore?: (sibling: Item) => void;
   onMoveUp?: (item: Item) => void;
   onMoveDown?: (item: Item) => void;
   onIndent?: (item: Item) => void;
@@ -63,6 +64,12 @@ export interface TreePanelOptions {
   onSelectionChanged?: (item: Item | undefined) => void;
   actions?: TreePanelActions;
   /**
+   * Emitowane po każdym rebuild listy widocznych węzłów (mutacja drzewa,
+   * toggle F/H). Niesie liczbę węzłów aktualnie ukrytych z powodu filtru
+   * FROZEN — używane przez StatusBar do pokazania `(+N frozen)`.
+   */
+  onVisibilityChanged?: (counts: { frozenHidden: number }) => void;
+  /**
    * Ukrywa korzeń drzewa — render zaczyna od jego dzieci jako top-level.
    * Używane w produkcji bo OrgReader.buildTree dorzuca syntetyczny "Plan Root"
    * niepochodzący z pliku. Default false (testy widzą prawdziwy root).
@@ -79,6 +86,7 @@ export default class TreePanel extends Window implements Focusable {
   private selectedIndex: number = 0;
   private scrollOffset: number = 0;
   private onSelectionChanged?: (item: Item | undefined) => void;
+  private onVisibilityChanged?: (counts: { frozenHidden: number }) => void;
   /** Stan rozwinięcia per item-id; przeżywa rebuild drzewa. */
   private expansionState: Map<string, boolean> = new Map();
   /** Filtry widoczności — TUI-only, nie wpływają na plik ani MCP. */
@@ -105,6 +113,7 @@ export default class TreePanel extends Window implements Focusable {
     super(wp);
     this.rootItem = opts.rootItem;
     this.onSelectionChanged = opts.onSelectionChanged;
+    this.onVisibilityChanged = opts.onVisibilityChanged;
     this.actions = opts.actions ?? {};
     this.hideRoot = opts.hideRoot ?? false;
     this.rebuildFlattenedNodes();
@@ -226,6 +235,25 @@ export default class TreePanel extends Window implements Focusable {
     if (this.selectedIndex >= flattened.length) {
       this.selectedIndex = Math.max(0, flattened.length - 1);
     }
+
+    if (this.onVisibilityChanged) {
+      this.onVisibilityChanged({
+        frozenHidden: this.hideFrozen ? this.countFrozenItems(this.rootItem) : 0,
+      });
+    }
+  }
+
+  /**
+   * Liczy węzły z :FROZEN: t w całym poddrzewie. Używane do `(+N frozen)`
+   * sufiksu w StatusBarze, żeby user widział że coś jest poza widokiem.
+   *
+   * @param item - Węzeł startowy
+   * @returns Liczba wszystkich frozen-węzłów w poddrzewie (włącznie z item).
+   */
+  private countFrozenItems(item: Item): number {
+    let n = item.getProperties().get('FROZEN') === 't' ? 1 : 0;
+    for (const c of item.getChildren()) n += this.countFrozenItems(c);
+    return n;
   }
 
   /**
@@ -294,6 +322,9 @@ export default class TreePanel extends Window implements Focusable {
         break;
       case 'o':
         if (current && this.actions.onAddSiblingAfter) this.actions.onAddSiblingAfter(current);
+        break;
+      case 'O':
+        if (current && this.actions.onAddSiblingBefore) this.actions.onAddSiblingBefore(current);
         break;
       case 'd':
         if (!current) break;

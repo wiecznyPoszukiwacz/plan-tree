@@ -3,6 +3,89 @@
 All notable changes to plan-tree TUI are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] — 2026-05-25
+
+### Added — TUI
+
+- **Klawisz `O` — sibling przed focusowanym (n5).** Komplementuje `o` (sibling po).
+  Tworzy nowy węzeł, przesuwa go `moveBefore` względem focusowanego, focus
+  przeskakuje do DetailsPanel z aktywną edycją tytułu. Na rootcie no-op
+  (statusbar: "Cannot add sibling to root"). `addSiblingAndEdit` w `main.mts`
+  sparametryzowany przez `position: 'after' | 'before'` — wspólna ścieżka dla obu.
+- **Licznik `(+N frozen)` w StatusBarze (n97).** Sygnał że coś jest poza widokiem
+  z powodu filtru FROZEN. Widoczny tylko w trybie NORMAL i gdy N>0. Wyłączony
+  po toggle `F` (hideFrozen=false → 0 → sufiks znika). Aktualizowany przy każdym
+  rebuild listy widocznych węzłów (mutacja drzewa / toggle F/H).
+  Liczy wszystkie węzły z `:FROZEN: t` w całym drzewie — agregat, nie tylko
+  korzenie podpoddrzew. Nowy callback `TreePanelOptions.onVisibilityChanged`
+  emituje `{ frozenHidden }` po każdym rebuild; `StatusBar.setFrozenHidden(n)`
+  konsumuje. Wired w `main.mts` przez `screen.render()` po update.
+
+### Plan (nie implementowane)
+
+Zapisane jako PROPOSAL pod n30/n1 (do triażu w kolejnych iteracjach):
+- **n98** — licznik otwartych QUESTION/PROPOSAL w StatusBarze (rekomendacja PRIO A).
+- **n99** — jump-to-id (`g <id>` prompt + skok do węzła).
+- **n100** — breadcrumb path w nagłówku DetailsPanel.
+
+## [0.8.6] — 2026-05-25
+
+### Fixed — mutacja MCP przesuwa selekcję TUI (bezpieczeństwo)
+
+Dotąd po wywołaniu MCP toola przez agenta selekcja w TUI pozostawała tam,
+gdzie była — user mógł nie zauważyć zmiany i wcisnąć `d`, usuwając nie to,
+co myślał. Teraz każda mutacja MCP przesuwa selekcję na "dotknięty" węzeł:
+
+- `add` → nowo utworzony item
+- `delete` → parent usuniętego (oryginał nie istnieje)
+- pozostałe (rename/setTodo/setNotes/move/moveBefore/moveAfter/addTag/
+  removeTag/setProperty/removeProperty/freeze/unfreeze/setPriority/split/
+  merge/extract) → `args.itemId` z requestu
+
+`OperationResult` dostał opcjonalne pole `affectedId` — wykorzystywane
+przez `add`/`delete` które same wyliczają (nowy ID / parent), reszta operacji
+fallbackuje do `args.itemId` w `MCPServer.runTool`. `handleTreeChangedFromMCP`
+po `applyTree` woła `treePanel.selectById(affectedId)` i odświeża DetailsPanel.
+
+## [0.8.5] — 2026-05-25
+
+### Fixed — MCP zwracał HTTP 500 po pierwszym requeście (0.8.4)
+
+W 0.8.4 stateless transport był współdzielony globalnie. SDK wprost zabrania
+reuse stateless transportu (`Stateless transport cannot be reused across
+requests. Create a new transport per request.`) — drugi request leciał
+w 500. Teraz `handleHttpRequest` tworzy świeżą parę `Server+transport`
+per request, podpina handlery, woła `connect` + `handleRequest`, w `finally`
+zamyka oba. Restart TUI nadal przezroczysty dla agenta.
+
+## [0.8.4] — 2026-05-25
+
+### Changed — MCP serwer stateless + last-call w StatusBar
+
+`MCPServer` przeszedł na **tryb stateless** SDK (`sessionIdGenerator: undefined`):
+jeden globalny `Server` + `StreamableHTTPServerTransport` utworzony przy
+`startServer()`, brak `Mcp-Session-Id` w odpowiedziach, brak walidacji sesji.
+Powód: po restarcie TUI agent (Claude Code) wcześniej trzymał nieaktualny
+session-id i musiał ręcznie reconnectować MCP — teraz każdy request jest
+niezależny i restart TUI staje się dla agenta przezroczysty.
+
+Konsekwencja w UI: licznik aktywnych sesji w StatusBar (` N`) zastąpiony
+znacznikiem **ostatniego wywołania**: ` HH:MM:SS <tool>` (np. ` 14:23:05 add`).
+Aktualizowany jednorazowo po każdym wywołaniu narzędzia — bez timera/polling.
+Nowe API: `MCPServer.setOnLastCallChanged((ts, tool) => …)`,
+`StatusBar.setMcpLastCall(ts, tool)`. Test `StatusBar` zaktualizowany.
+
+## [0.8.3] — 2026-05-25
+
+### Added — log wywołań MCP toolów w DebugPanel
+
+`MCPServer.runTool` po każdym wywołaniu dopisuje do `Logger` jedną linię
+postaci `add parentId=n42 title="Foo" → ok` lub `delete itemId=n7 → fail: <msg>`.
+Dzięki temu DebugPanel (toggle: backtick) pokazuje na bieżąco co robi agent —
+jednolinijkowo, bez konieczności otwierania logu po stronie klienta MCP.
+Długie wartości stringów skracane są do 40 znaków, tablice renderowane jako
+`[N]`. Wyjątki z toolów lecą jako `error` z prefiksem `→ throw: …`.
+
 ## [0.8.2] — 2026-05-25
 
 ### Added — bezpośrednie klawisze priorytetu + hint w StatusBar

@@ -14,8 +14,10 @@ import type { StyleId, WindowProperties } from 'take4-console';
  */
 interface StatusBarState {
   mode: 'normal' | 'edit';
-  mcpSessions: number;
+  mcpLastCallTs: Date | null;
+  mcpLastCallTool: string;
   message: string;
+  frozenHidden: number;
 }
 
 /**
@@ -35,8 +37,10 @@ export default class StatusBar extends Window {
     super(wp);
     this.state = {
       mode: 'normal',
-      mcpSessions: 0,
+      mcpLastCallTs: null,
+      mcpLastCallTool: '',
       message: '',
+      frozenHidden: 0,
     };
     this.inverseStyleId = this.registry.register({ inverse: true });
   }
@@ -62,13 +66,28 @@ export default class StatusBar extends Window {
   }
 
   /**
-   * Ustawia liczbę aktywnych sesji MCP. 0 = brak podłączonego klienta.
+   * Ustawia znacznik ostatniego wywołania MCP toola. Wyświetlany jako
+   * "⏱ HH:MM:SS <tool>" po prawej stronie statusbara.
    *
-   * @param count - Liczba sesji (>= 0)
+   * @param ts - Timestamp wywołania
+   * @param tool - Nazwa narzędzia (add/delete/move/…)
    */
-  public setMcpSessions(count: number): void {
-    if (this.state.mcpSessions === count) return;
-    this.state.mcpSessions = count;
+  /**
+   * Ustawia liczbę węzłów aktualnie ukrytych przez filtr FROZEN. W trybie
+   * NORMAL i gdy N>0 wyświetlany jest sufiks `(+N frozen)` w lewej części
+   * statusbara — sygnał dla usera, że coś jest poza widokiem.
+   *
+   * @param n - Liczba ukrytych frozen-węzłów (0 = nic do pokazania).
+   */
+  public setFrozenHidden(n: number): void {
+    if (this.state.frozenHidden === n) return;
+    this.state.frozenHidden = n;
+    this.invalidate();
+  }
+
+  public setMcpLastCall(ts: Date, tool: string): void {
+    this.state.mcpLastCallTs = ts;
+    this.state.mcpLastCallTool = tool;
     this.invalidate();
   }
 
@@ -118,14 +137,23 @@ export default class StatusBar extends Window {
 
     const modeStr = `[${this.state.mode === 'normal' ? 'NORMAL' : 'EDIT'}]`;
     // Key hints widoczne tylko w trybie normalnym (w EDIT pole tekstowe przejmuje wejście).
-    const leftStr = this.state.mode === 'normal' ? `${modeStr}  1-3/0:prio  p:cycle` : modeStr;
-    // Right side: temporary message wins; else MCP indicator (plug icon + count)
-    // when ≥1 session. 0 sesji → tylko mode po lewej.
+    const frozenSuffix = this.state.mode === 'normal' && this.state.frozenHidden > 0
+      ? `  (+${this.state.frozenHidden} frozen)`
+      : '';
+    const leftStr = this.state.mode === 'normal'
+      ? `${modeStr}  1-3/0:prio  p:cycle${frozenSuffix}`
+      : modeStr;
+    // Right side: temporary message wins; else MCP last-call indicator
+    // (icon + HH:MM:SS + tool name) gdy jakiekolwiek wywołanie miało miejsce.
+    // Brak wywołań → tylko mode po lewej.
     let rightPart = '';
     if (this.state.message) {
       rightPart = this.state.message;
-    } else if (this.state.mcpSessions > 0) {
-      rightPart = ` ${this.state.mcpSessions}`;
+    } else if (this.state.mcpLastCallTs) {
+      const ts = this.state.mcpLastCallTs;
+      const pad = (n: number): string => n.toString().padStart(2, '0');
+      const hms = `${pad(ts.getHours())}:${pad(ts.getMinutes())}:${pad(ts.getSeconds())}`;
+      rightPart = ` ${hms} ${this.state.mcpLastCallTool}`;
     }
 
     let line = leftStr;

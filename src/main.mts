@@ -114,6 +114,15 @@ class ApplicationState {
     this.treeSize = new Size(flex(50, 1), flex(1, 1));
     this.detailsSize = new Size(flex(50, 1), flex(1, 1));
 
+    // StatusBar musi powstać PRZED TreePanel — konstruktor TreePanel woła
+    // rebuildFlattenedNodes() które fire'uje onVisibilityChanged →
+    // setFrozenHidden na statusBar. addChild dla statusBar jest niżej w
+    // kolejności layoutu (pozycja na dole ekranu).
+    this.statusBar = new StatusBar({
+      pos: Pos.flex(1),
+      size: new Size(flex(1, 1), 1),
+    });
+
     this.treePanel = new TreePanel(
       {
         pos: Pos.flex(0),
@@ -125,11 +134,16 @@ class ApplicationState {
         rootItem: tree.root as Item,
         hideRoot: true,
         onSelectionChanged: (item) => this.handleSelectionChanged(item),
+        onVisibilityChanged: ({ frozenHidden }) => {
+          this.statusBar.setFrozenHidden(frozenHidden);
+          this.screen.render();
+        },
         actions: {
           onCycleTodo: (item) => this.cycleTodo(item),
           onDelete: (item) => this.deleteItem(item),
           onAddChild: (parent) => this.addChildAndEdit(parent),
-          onAddSiblingAfter: (sibling) => this.addSiblingAndEdit(sibling),
+          onAddSiblingAfter: (sibling) => this.addSiblingAndEdit(sibling, 'after'),
+          onAddSiblingBefore: (sibling) => this.addSiblingAndEdit(sibling, 'before'),
           onMoveUp: (item) => this.moveSibling(item, 'up'),
           onMoveDown: (item) => this.moveSibling(item, 'down'),
           onIndent: (item) => this.indentItem(item),
@@ -179,10 +193,6 @@ class ApplicationState {
     this.debugPanel.setVisible(false);
     rootColumn.addChild(this.debugPanel);
 
-    this.statusBar = new StatusBar({
-      pos: Pos.flex(1),
-      size: new Size(flex(1, 1), 1),
-    });
     rootColumn.addChild(this.statusBar);
 
     this.windowManager = new WindowManager(this.screen, {
@@ -250,12 +260,12 @@ class ApplicationState {
 
     this.mcpServer = new MCPServer(
       tree,
-      (newTree: Tree) => this.handleTreeChangedFromMCP(newTree),
+      (newTree: Tree, affectedId: string | null) => this.handleTreeChangedFromMCP(newTree, affectedId),
       () => (this.treePanel.getSelectedItem() ?? null) as Item | null,
       3000,
     );
-    this.mcpServer.setOnSessionsChanged((count) => {
-      this.statusBar.setMcpSessions(count);
+    this.mcpServer.setOnLastCallChanged((ts: Date, tool: string) => {
+      this.statusBar.setMcpLastCall(ts, tool);
       this.screen.render();
     });
   }
@@ -294,13 +304,21 @@ class ApplicationState {
 
   /**
    * Reakcja na zmianę drzewa z MCP — odświeżenie root, render, autosave.
+   * Po zastosowaniu przesuwa selekcję na `affectedId` (jeśli istnieje
+   * w nowym drzewie) — user widzi gdzie nastąpiła zmiana, nie ryzykuje
+   * usunięcia czegoś innego niż zamierzał.
    *
    * @param newTree - Nowe drzewo
+   * @param affectedId - ID węzła do podświetlenia (lub null)
    */
-  private handleTreeChangedFromMCP(newTree: Tree): void {
-    // MCP zewnętrznie zmienił drzewo — pushuj do undo i zastosuj.
+  private handleTreeChangedFromMCP(newTree: Tree, affectedId: string | null): void {
     this.pushUndo();
     this.applyTree(newTree);
+    if (affectedId) {
+      this.treePanel.selectById(affectedId);
+      this.detailsPanel.setItem(this.treePanel.getSelectedItem() ?? null);
+      this.screen.render();
+    }
   }
 
   /**
@@ -406,9 +424,12 @@ class ApplicationState {
   }
 
   /**
-   * Dodaje rodzeństwo po wskazanym węźle, wchodzi w edycję tytułu.
+   * Dodaje rodzeństwo wskazanego węzła i wchodzi w edycję tytułu.
+   *
+   * @param sibling - Istniejące rodzeństwo (kotwica pozycji).
+   * @param position - 'after' = po sibling (klawisz `o`), 'before' = przed (klawisz `O`).
    */
-  private addSiblingAndEdit(sibling: Item): void {
+  private addSiblingAndEdit(sibling: Item, position: 'after' | 'before'): void {
     // Znajdź rodzica
     const parentId = this.findParentIdOf(this.tree, sibling.getId());
     if (!parentId) {
@@ -429,8 +450,9 @@ class ApplicationState {
     const newChild = newChildren[newChildren.length - 1];
     if (!newChild) return;
     const newId = newChild.getId();
-    // Przesuń na pozycję po sibling
-    const r2 = TreeOperations.moveAfter(r1.newTree, newId, sibling.getId());
+    // Przesuń na pozycję względem sibling
+    const moveOp = position === 'after' ? TreeOperations.moveAfter : TreeOperations.moveBefore;
+    const r2 = moveOp(r1.newTree, newId, sibling.getId());
     if (!r2.success || !r2.newTree) {
       this.applyMutation(r1);
       return;

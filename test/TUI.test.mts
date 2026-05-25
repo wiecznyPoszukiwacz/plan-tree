@@ -353,11 +353,13 @@ test('StatusBar - render includes mode indicator', () => {
   assert.ok(dump.includes('EDIT'), `expected 'EDIT' in:\n${dump}`);
 });
 
-test('StatusBar - render shows MCP session count', () => {
+test('StatusBar - render shows MCP last-call timestamp + tool', () => {
   const bar = makeBar();
-  bar.setMcpSessions(3);
+  const ts = new Date(2026, 4, 25, 14, 23, 5);
+  bar.setMcpLastCall(ts, 'add');
   const dump = dumpWindowText(bar);
-  assert.ok(dump.includes('3'), `expected MCP session count in:\n${dump}`);
+  assert.ok(dump.includes('14:23:05'), `expected last-call HH:MM:SS in:\n${dump}`);
+  assert.ok(dump.includes('add'), `expected last-call tool name in:\n${dump}`);
 });
 
 test('TreePanel - handles nested hierarchy correctly', () => {
@@ -620,6 +622,91 @@ test('PopupMenu - freeze entry shows "Zamroź" on unfrozen and "Odmroź" on froz
   assert.equal(panel.getMenu().getItems()[0].label, 'Odmroź');
   panel.handleKey('\r');
   assert.equal((toggled as ItemInterface | null)?.getId(), 'c2');
+});
+
+test('TreePanel - O key triggers onAddSiblingBefore', () => {
+  const root = new Item('root', 'Root');
+  root.addChild(new Item('c1', 'C1'));
+  const calls: string[] = [];
+  const panel = new TreePanel(
+    {
+      pos: Pos.topLeft(),
+      size: new Size(40, 20),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+    },
+    {
+      rootItem: root,
+      actions: {
+        onAddSiblingBefore: (sib) => calls.push(`before:${sib.getId()}`),
+        onAddSiblingAfter: (sib) => calls.push(`after:${sib.getId()}`),
+      },
+    },
+  );
+  screen.addChild(panel);
+  panel.setFocused(true);
+
+  panel.handleKey('j'); // select c1
+  panel.handleKey('o');
+  panel.handleKey('O');
+
+  assert.deepEqual(calls, ['after:c1', 'before:c1']);
+});
+
+test('TreePanel - onVisibilityChanged emits frozenHidden count on rebuild and toggle', () => {
+  const root = new Item('root', 'Root');
+  const fp = new Item('fp', 'Frozen Parent').setProperty('FROZEN', 't');
+  const fc = new Item('fc', 'Frozen Child').setProperty('FROZEN', 't');
+  fp.addChild(fc);
+  root.addChild(fp);
+  root.addChild(new Item('plain', 'Plain'));
+
+  const events: number[] = [];
+  const panel = new TreePanel(
+    {
+      pos: Pos.topLeft(),
+      size: new Size(40, 20),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+    },
+    {
+      rootItem: root,
+      onVisibilityChanged: ({ frozenHidden }) => events.push(frozenHidden),
+    },
+  );
+  screen.addChild(panel);
+  panel.setFocused(true);
+
+  // Initial rebuild w konstruktorze: hideFrozen=true, 2 frozen items.
+  assert.equal(events[events.length - 1], 2);
+
+  // Toggle F → hideFrozen=false, count=0.
+  panel.handleKey('F');
+  assert.equal(events[events.length - 1], 0);
+
+  // Toggle F → back to true, count=2 again.
+  panel.handleKey('F');
+  assert.equal(events[events.length - 1], 2);
+});
+
+test('StatusBar - setFrozenHidden renders "(+N frozen)" suffix in NORMAL mode', () => {
+  const bar = makeBar();
+  bar.setFrozenHidden(3);
+  const dump = dumpWindowText(bar);
+  assert.ok(dump.includes('(+3 frozen)'), `expected '(+3 frozen)' in:\n${dump}`);
+});
+
+test('StatusBar - frozen suffix hidden when count is 0', () => {
+  const bar = makeBar();
+  bar.setFrozenHidden(0);
+  const dump = dumpWindowText(bar);
+  assert.ok(!dump.includes('frozen'), `did not expect 'frozen' in:\n${dump}`);
+});
+
+test('StatusBar - frozen suffix hidden in EDIT mode', () => {
+  const bar = makeBar();
+  bar.setFrozenHidden(5);
+  bar.setMode('edit');
+  const dump = dumpWindowText(bar);
+  assert.ok(!dump.includes('frozen'), `did not expect 'frozen' in edit mode:\n${dump}`);
 });
 
 test('TreePanel - pinning applies only at root level, not nested', () => {

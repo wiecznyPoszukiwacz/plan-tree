@@ -1,5 +1,4 @@
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
 import Logger from './Logger.mjs';
 // SDK oznacza `Server` jako @deprecated z preferencją dla `McpServer`,
 // ale sam dokument SDK przyznaje: "Only use Server for advanced use cases".
@@ -58,18 +57,15 @@ export default class MCPServer {
   ].join('\n');
 
   private tree: Tree;
-  private readonly onTreeChanged: (newTree: Tree) => void;
+  private readonly onTreeChanged: (newTree: Tree, affectedId: string | null) => void;
   private readonly getSelection: SelectionProvider;
-  private onSessionsChanged: ((count: number) => void) | null = null;
+  private onLastCallChanged: ((ts: Date, tool: string) => void) | null = null;
   private readonly port: number;
   private readonly host: string;
   private httpServer: HttpServer | null = null;
-  // Per-session: każdy klient MCP (Claude Code, curl, drugi CC w innym oknie)
-  // dostaje własną parę Server + transport. Wcześniej był jeden globalny
-  // transport — drugi init wywalał się z "Server already initialized",
-  // a po rozłączeniu pierwszego klienta cały serwer leciał w "Server not
-  // initialized" dla wszystkich.
-  private readonly sessions: Map<string, { server: Server; transport: StreamableHTTPServerTransport }> = new Map();
+  // Stateless: brak utrzymywanego Server+transport — tworzone per request
+  // w handleHttpRequest (SDK wymaga świeżej pary dla stateless mode).
+  // Restart TUI jest dla klienta MCP przezroczysty.
 
   /**
    * Konstruktor serwera MCP.
@@ -81,7 +77,7 @@ export default class MCPServer {
    */
   public constructor(
     initialTree: Tree,
-    onChange: (newTree: Tree) => void,
+    onChange: (newTree: Tree, affectedId: string | null) => void,
     getSelection: SelectionProvider = () => null,
     port: number = 3000,
     host: string = '127.0.0.1',
@@ -105,14 +101,13 @@ export default class MCPServer {
   }
 
   /**
-   * Rejestruje callback wywoływany przy każdej zmianie liczby aktywnych
-   * sesji (połączenie / rozłączenie klienta). Używany przez TUI do renderu
-   * licznika w statusbarze.
+   * Rejestruje callback wywoływany po każdym wywołaniu MCP toola.
+   * Używany przez TUI do renderu znacznika "ostatnie wywołanie" w statusbarze.
    *
-   * @param cb - Funkcja przyjmująca aktualną liczbę sesji
+   * @param cb - Funkcja przyjmująca timestamp i nazwę toola
    */
-  public setOnSessionsChanged(cb: (count: number) => void): void {
-    this.onSessionsChanged = cb;
+  public setOnLastCallChanged(cb: (ts: Date, tool: string) => void): void {
+    this.onLastCallChanged = cb;
   }
 
   /**
@@ -150,8 +145,10 @@ export default class MCPServer {
   }
 
   /**
-   * Startuje serwer HTTP. Sesje MCP są tworzone leniwie per request
-   * (`handleHttpRequest`), więc tutaj tylko HTTP listener.
+   * Startuje serwer HTTP. Tryb stateless: każdy request dostaje świeżą parę
+   * Server+transport (SDK wprost wymaga tego — `Stateless transport cannot be
+   * reused across requests`). Brak session-id i brak init handshake'u
+   * w stateless mode, więc restart TUI jest dla agenta przezroczysty.
    */
   public startServer(): void {
     this.httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -161,7 +158,7 @@ export default class MCPServer {
     this.httpServer.listen(this.port, this.host, () => {
       Logger.info(
         'MCP',
-        `HTTP server listening on http://${this.host}:${this.port}/mcp, items=${this.tree.itemsById.size}`,
+        `HTTP server listening on http://${this.host}:${this.port}/mcp (stateless), items=${this.tree.itemsById.size}`,
       );
     });
 
@@ -171,17 +168,13 @@ export default class MCPServer {
   }
 
   /**
-   * Routuje requesty na /mcp do per-session transportów. Jeśli request
-   * ma nagłówek `mcp-session-id` i sesję znamy — używamy jej transportu.
-   * Inaczej traktujemy jako nową sesję: tworzymy parę Server+transport,
-   * rejestrujemy handlery i podpinamy. Sesja zapisuje się do mapy w
-   * callbacku `onsessioninitialized`, więc identyfikator jest dostępny
-   * dopiero po obsłudze init request'a.
+   * Routuje requesty na /mcp. Per request: świeży Server+transport — SDK
+   * odrzuca reuse stateless transportu.
    *
    * @param req - Przychodzący request HTTP
    * @param res - Odpowiedź HTTP
    */
-  private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
+  private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = req.url ?? '/';
     if (!url.startsWith('/mcp')) {
       res.statusCode = 404;
@@ -189,66 +182,29 @@ export default class MCPServer {
       return;
     }
 
-    const sessionId = req.headers['mcp-session-id'];
-    const sessionIdStr = typeof sessionId === 'string' ? sessionId : undefined;
-
-    let transport: StreamableHTTPServerTransport;
-    if (sessionIdStr && this.sessions.has(sessionIdStr)) {
-      transport = this.sessions.get(sessionIdStr)!.transport;
-    } else {
-      transport = this.createSession();
-    }
-
-    transport.handleRequest(req, res).catch((error: Error) => {
-      Logger.error('MCP', `handleRequest error: ${error.message}`);
-      if (!res.headersSent) {
-        res.statusCode = 500;
-        res.end('Internal error');
-      }
-    });
-  }
-
-  /**
-   * Tworzy nową sesję MCP: nowy Server, nowy transport, połączone i
-   * zarejestrowane. Transport sam wygeneruje session ID przy `initialize`
-   * i wpisze parę do mapy w callbacku `onsessioninitialized`. Po
-   * `onclose` (klient odpiął się lub session timeout) wpis znika z mapy.
-   *
-   * @returns Świeży transport gotowy do `handleRequest`
-   */
-  private createSession(): StreamableHTTPServerTransport {
     const server = new Server(
-      { name: 'plan-tree-tui', version: '0.6.0' },
+      { name: 'plan-tree-tui', version: '0.8.5' },
       {
         capabilities: { tools: {}, resources: {} },
         instructions: MCPServer.SERVER_INSTRUCTIONS,
       },
     );
     this.registerHandlers(server);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
 
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (sid: string) => {
-        this.sessions.set(sid, { server, transport });
-        Logger.info('MCP', `Session ${sid.slice(0, 8)} initialized (${this.sessions.size} active)`);
-        this.onSessionsChanged?.(this.sessions.size);
-      },
-    });
-
-    transport.onclose = (): void => {
-      const sid = transport.sessionId;
-      if (sid && this.sessions.has(sid)) {
-        this.sessions.delete(sid);
-        Logger.info('MCP', `Session ${sid.slice(0, 8)} closed (${this.sessions.size} active)`);
-        this.onSessionsChanged?.(this.sessions.size);
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res);
+    } catch (error) {
+      Logger.error('MCP', `handleRequest error: ${(error as Error).message}`);
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.end('Internal error');
       }
-    };
-
-    server.connect(transport).catch((error: Error) => {
-      Logger.error('MCP', `Failed to connect new session: ${error.message}`);
-    });
-
-    return transport;
+    } finally {
+      transport.close().catch(() => { /* best effort */ });
+      server.close().catch(() => { /* best effort */ });
+    }
   }
 
   /**
@@ -559,6 +515,32 @@ export default class MCPServer {
   }
 
   /**
+   * Buduje jednolinijkowy podgląd wywołania toola dla DebugPanel.
+   * Skraca długie wartości tytułów/notatek do 40 znaków, pomija undefined.
+   *
+   * @param name - Nazwa toola
+   * @param args - Argumenty toola
+   * @returns String typu `add parentId=n42 title="Foo"`
+   */
+  private static formatToolCall(name: string, args: Record<string, unknown>): string {
+    const parts: string[] = [];
+    for (const [k, v] of Object.entries(args)) {
+      if (v === undefined || v === null) continue;
+      let repr: string;
+      if (typeof v === 'string') {
+        const trimmed = v.length > 40 ? v.slice(0, 37) + '...' : v;
+        repr = /[\s"=]/.test(v) ? JSON.stringify(trimmed) : trimmed;
+      } else if (Array.isArray(v)) {
+        repr = '[' + v.length + ']';
+      } else {
+        repr = String(v);
+      }
+      parts.push(k + '=' + repr);
+    }
+    return parts.length > 0 ? name + ' ' + parts.join(' ') : name;
+  }
+
+  /**
    * Wykonuje tool, aktualizuje drzewo i wywołuje callback przy sukcesie.
    *
    * @param name - Nazwa toola
@@ -566,7 +548,7 @@ export default class MCPServer {
    * @returns Odpowiedź tools/call w formacie MCP (content[])
    */
   private runTool(name: string, args: Record<string, unknown>): { content: Array<{ type: 'text'; text: string }>; isError?: boolean } {
-    let result: { success: boolean; message: string; newTree?: Tree; diff?: unknown };
+    let result: { success: boolean; message: string; newTree?: Tree; diff?: unknown; affectedId?: string };
 
     try {
       switch (name) {
@@ -654,6 +636,7 @@ export default class MCPServer {
           };
       }
     } catch (error) {
+      Logger.error('MCP', MCPServer.formatToolCall(name, args) + ' → throw: ' + (error as Error).message);
       return {
         content: [{ type: 'text', text: `Internal error: ${(error as Error).message}` }],
         isError: true,
@@ -662,8 +645,19 @@ export default class MCPServer {
 
     if (result.success && result.newTree) {
       this.tree = result.newTree;
-      this.onTreeChanged(this.tree);
+      // affectedId: ID, na które TUI ma przesunąć selekcję — chroni przed
+      // przypadkowym deletem nie tego co user myślał. Preferuj wartość
+      // z OperationResult (add → newId, delete → parent), fallback do
+      // args.itemId (dla wszystkich pojedynczo-celowanych mutacji).
+      const affectedId =
+        result.affectedId ??
+        (typeof args.itemId === 'string' ? args.itemId : null);
+      this.onTreeChanged(this.tree, affectedId);
     }
+
+    const line = MCPServer.formatToolCall(name, args) + ' → ' + (result.success ? 'ok' : 'fail: ' + result.message);
+    Logger.log(result.success ? 'info' : 'error', 'MCP', line);
+    this.onLastCallChanged?.(new Date(), name);
 
     const payload = {
       success: result.success,
@@ -820,17 +814,6 @@ export default class MCPServer {
    * tak by `handleExit` w main.mts nie zawisł na otwartych połączeniach.
    */
   public stopServer(): void {
-    // Zamykamy wszystkie aktywne sesje — każda ma własny transport+server
-    for (const { server, transport } of this.sessions.values()) {
-      transport.close().catch((error: Error) => {
-        Logger.error('MCP', `transport.close error: ${error.message}`);
-      });
-      server.close().catch((error: Error) => {
-        Logger.error('MCP', `server.close error: ${error.message}`);
-      });
-    }
-    this.sessions.clear();
-
     if (this.httpServer) {
       this.httpServer.closeAllConnections?.();
       this.httpServer.close((error) => {

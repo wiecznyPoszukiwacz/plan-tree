@@ -59,6 +59,14 @@ export interface OperationResult {
   message: string;
   newTree?: Tree;
   diff?: string;
+  /**
+   * ID węzła, na który TUI powinno przesunąć selekcję po tej operacji.
+   * Cel: gdy agent zmienia drzewo, user *widzi* gdzie nastąpiła zmiana
+   * — nie ryzykuje usunięcia czegoś innego niż myślał. Dla add to nowy ID;
+   * dla delete to parent (oryginał już nie istnieje); dla pozostałych
+   * mutacji to itemId argumentu.
+   */
+  affectedId?: string;
 }
 
 /**

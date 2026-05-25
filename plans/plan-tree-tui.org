@@ -3,12 +3,6 @@
 :ID: n1
 :END:
 Dziś TUI tylko wyświetla drzewo. Edycja jest możliwa wyłącznie przez MCP (agent) albo zewnętrzny edytor pliku. Cel: dać użytkownikowi pełen warsztat z klawiatury, żeby plan-tree TUI był samodzielnym narzędziem.
-** Dodanie dziecka / rodzeństwa — 'a' add child, 'o' add sibling po, 'O' add sibling przed
-:PROPERTIES:
-:ID: n5
-:END:
-Po dodaniu: wejść od razu w tryb edycji tytułu nowego węzła. TreeOperations.add (parent = focused dla 'a', parent.parent dla 'o'/'O', plus moveBefore/moveAfter dla pozycji).
-Stan: 'a' (add child) i 'o' (add sibling po) zaimplementowane w main.mts:132,376,403. Brakuje 'O' (add sibling przed) — nie ma case 'O' w TreePanel ani callbacka onAddSiblingBefore.
 ** Edycja tagów — tryb tag-edit, lista chipów
 :PROPERTIES:
 :ID: n7
@@ -19,12 +13,27 @@ Klawisz np. '#'. Walidacja tagu (no whitespace, no ':') już jest w TreeOperatio
 :ID: n11
 :END:
 Backend już jest (TreeOperations.find). Tylko UI: input field + lista wyników w jakimś modalu albo overlay.
-** Undo (Ctrl+Z) / redo (Ctrl+Shift+Z) — stos historii drzew
+** Redo (Ctrl+Shift+Z) — drugi stos historii
 :PROPERTIES:
 :ID: n12
 :END:
-Trzymanie poprzednich snapshotów Tree w pamięci (immutable pattern w TreeOperations sprzyja). Limit np. 100. Działa zarówno dla edycji z TUI jak i dla mutacji MCP (zachowuje stan przed/po onTreeChanged).
-Stan: undo (Ctrl+Z) zaimplementowane (main.mts:80 undoStack, :218 keybinding, :323 undo()). Brakuje redo (Ctrl+Shift+Z) — nie ma redoStack ani handlera. Po undo trzeba zachować poppniętą wersję, żeby redo mogło ją przywrócić; każda nowa mutacja czyści redoStack.
+Undo (Ctrl+Z) zaimplementowane w 0.5.0 (main.mts:80 undoStack, :218 keybinding, :323 undo()). Brakuje redo — nie ma redoStack ani handlera. Po undo trzeba zachować poppniętą wersję, żeby redo mogło ją przywrócić; każda nowa mutacja czyści redoStack.
+** PROPOSAL Jump-to-id — klawisz `g` otwiera prompt na ID, Enter skacze do węzła
+:PROPERTIES:
+:ID: n99
+:END:
+Agent w czacie pisze "patrz n42" — user dziś musi scrollować drzewo. Po: `g`, wpisuje `42` (lub `n42`), Enter → selekcja przeskakuje na ten węzeł (auto-unfold rodziców jeśli zwinięci).
+Synergistyczne z toggle ID (n94 z 0.6.0, klawisz `I`) — razem stanowią parę "agent cytuje ID / user nawiguje po ID".
+Implementacja: mini-prompt overlay (jak edit-mode w DetailsPanel ale jednoliniowy w StatusBarze), `TreePanel.selectById` już istnieje (używane przez MCP affectedId od 0.8.6). Trzeba dodać unfoldAncestors gdy id ukryty pod zwiniętym rodzicem.
+Rekomendacja: PRIO B — ergonomicznie wartościowe, ale rzadziej niż licznik decyzji (n98). ~20 min.
+** PROPOSAL Breadcrumb path w nagłówku DetailsPanel
+:PROPERTIES:
+:ID: n100
+:END:
+Gdy plan rośnie, user łatwo gubi kontekst rodziców focusowanego węzła. TUI ma `path` w ambient selection (MCP), ale w samym TUI nie jest widoczny.
+Po: na górze DetailsPanel pierwszy wiersz to "root › n30 › n71 › n75" (lub z tytułami skróconymi: "Quality of life › Agent-inbox › Blokada add"). Klikalne nie musi być — sama widoczność wystarczy.
+Implementacja: helper `getPathToItem(tree, id)` (logika z `findParentId` ale akumulując); render w `DetailsPanel.render` jako pierwsza linia z dim-color, separator `› `. Zawijanie do szerokości panelu (mamy już w 0.4.0).
+Rekomendacja: PRIO B — eliminuje "zaraz gdzie ja jestem?" moment. ~15 min.
 * PROPOSAL Quality of life — żebyś nadążał za moim tempem
 :PROPERTIES:
 :ID: n30
@@ -448,6 +457,13 @@ Granica: dla wpisów technicznych (QUESTION, RISK) checklista jest zbędna — t
 Wariant lekki (bez blokowania): checklist jest sugestią w statusbarze ("PROPOSAL n_NN nie ma uzupełnionej scope-check"), nie hard wymogiem.
 Spina się z [[n71]] (agent-inbox jako triage station): scope check to mechanizm który **podnosi** wymóg jakości na samym wejściu, nie czeka aż user zauważy że pomysł jest niedopracowany.
 ROI: micro-feature, duży wpływ ergonomiczny. Wymusza ode mnie ustosunkowanie się do kosztów zanim wrzucę pomysł.
+** PROPOSAL Licznik otwartych QUESTION/PROPOSAL w StatusBarze
+:PROPERTIES:
+:ID: n98
+:END:
+User od razu widzi ile decyzji ode mnie czeka — bez przeglądania drzewa. Format: `❓3 ◆2` po prawej w StatusBarze obok mcp-last-call. Liczone z całego drzewa (z pominięciem FROZEN — zgodnie z 0.8.1 kaskada). Aktualizacja przy każdym applyTree.
+Synergistyczne z przyszłym n34 (dashboard QUESTION) — ten sam licznik byłby tam tytułem widoku.
+Rekomendacja: PRIO A — wprost realizuje "skraca czas od propozycji do decyzji" z CLAUDE.md. Tani (~15 min): metoda `countOpenDecisions(tree)` w TreeOperations + setter w StatusBar + wywołanie w ApplicationState.applyTree.
 * PROPOSAL Anchors — punkty nietykalne przez agenta, kotwica dla reszty planu
 :PROPERTIES:
 :ID: n40
@@ -462,11 +478,9 @@ Powiązane z n30 (QoL), ale ważniejsze — to nie usprawnienie, to mechanizm ko
 :ID: n41
 :END:
 Reuse istniejącej infrastruktury properties drawer (`:PROPERTIES:` ... `:END:`, klucz=wartość — patrz `:ID:`, `:PRIORITY:`). Bez nowego TodoState — anchor jest ortogonalny do todo (anchor TODO, anchor DONE, anchor QUESTION — wszystkie sensowne).
-
 ANCHOR ≠ FROZEN:
 - ANCHOR = kontrakt "agent nie modyfikuje tego węzła ani jego notes/tytułu" — chodzi o ochronę przed scope-creep ze strony agenta. Węzeł aktywny, użytkownik wie co tam jest, agent nie tknie.
 - FROZEN (już zaimplementowane jako property :FROZEN: t z kaskadowym filtrowaniem) = "ta gałąź jest na pauzie, nie pracujemy nad nią" — chodzi o ukrycie z radaru.
-
 Implementacja wzorowana na FROZEN (te same mechanizmy: property w drawer, MCP tools set/remove, filtr w find/summary, afordancja w TUI), ale z innym semantycznym znaczeniem i innym efektem (ANCHOR nie ukrywa, tylko blokuje mutacje).
 ** MCP tools: anchor(itemId) / unanchor(itemId) — wrappery nad setProperty/removeProperty
 :PROPERTIES:
@@ -513,10 +527,6 @@ Opcje:
 (C) Agent może unanchor TYLKO w odpowiedzi na explicit user request w rozmowie — kontrakt protokołu. Polega na mojej dyscyplinie, nie egzekwowane przez kod.
 (D) Wzorzec consent: agent prosi przez tool requestUnanchor(itemId, reason), TUI pokazuje dialog "Claude wants to unanchor nN: <reason> — allow?" — wymaga dialog widget w TUI.
 Rekomendacja: (A) na start — minimalne ryzyko, naturalna eskalacja do ciebie. (D) jako future enhancement gdy okaże się że zbyt często cię o to pytam.
-*** (new)
-:PROPERTIES:
-:ID: n48
-:END:
 * Inbox — skrótowe notatki ode mnie, agent rozwija i przenosi
 :PROPERTIES:
 :ID: n49
@@ -604,16 +614,22 @@ Gdy agent zauważy że dwa protected punkty (dowolna kombinacja RS i ANCHOR) są
 - Sygnalizuje w czacie żeby user nie przeoczył.
 - Wstrzymuje wszystkie akcje zależne od któregokolwiek z konfliktujących protected aż user rozstrzygnie.
 Powód: protected jest fundamentem. Cicha decyzja agenta o tym który "wygrywa" niszczy zaufanie do mechanizmu.
-** QUESTION Jak oznaczyć RS — property, tag, czy nowy keyword?
+** DONE Decyzja: RS oznaczane property :ROCK-SOLID: t (analogicznie do :FROZEN:) :decision:
 :PROPERTIES:
 :ID: n59
 :END:
-Opcje:
-(A) Property :ROCK-SOLID: t — analogicznie do :FROZEN: t. Ortogonalne do TodoState i tagów.
-(B) Tag :rock-solid: — proste, widoczne w tytule, ale tag jest na równi z innymi (np. :invariant:) i można pomylić.
-(C) Nowy TodoState 'ROCK-SOLID' — mocno wyróżnia, ale miesza znaczenie (TODO state = status pracy, nie poziom autorytetu).
-Rekomendacja: (A). Wzorzec FROZEN sprawdza się ([[n14]]), parser i UI już rozróżniają property od tagów, nie miesza się z osią TodoState. Render w TreePanel: dedykowany prefiks (np. ◆) + ewentualnie border/highlight.
-Konsekwencja dla MCP: tool rockSolid(itemId)/unRockSolid(itemId) (analogicznie do freeze/unfreeze) + property :ROCK-SOLID: w org-mode pliku.
+User wybrał (A) — zgodnie z rekomendacją.
+
+Property :ROCK-SOLID: t — analogicznie do :FROZEN: t. Ortogonalne do TodoState i tagów. Wzorzec FROZEN sprawdza się (n14), parser i UI już rozróżniają property od tagów, nie miesza się z osią TodoState.
+
+Konsekwencja dla implementacji:
+- MCP tools: rockSolid(itemId) / unRockSolid(itemId) (analogicznie do freeze/unfreeze).
+- Render w TreePanel: dedykowany prefiks (np. ◆) + ewentualnie border/highlight.
+- :ROCK-SOLID: t persystowane w :PROPERTIES: drawer org-mode pliku (round-trip).
+
+Odrzucone:
+- (B) Tag :rock-solid: — mieszał się z tagami domenowymi (np. :invariant:).
+- (C) Nowy TodoState 'ROCK-SOLID' — miesza znaczenie (TodoState = status pracy, nie poziom autorytetu).
 ** DONE Decyzja: RS vs ANCHOR — różnica tylko w edytowalności przez agenta :decision:
 :PROPERTIES:
 :ID: n60
@@ -646,107 +662,22 @@ Gdy agent chce zmienić RS (bo np. pojawia się argument który ją podważa lub
 4. Czeka na decyzję usera (akceptuje / odrzuca / modyfikuje).
 5. Po akceptacji: edytuje RS, QUESTION → DONE z notatką "zaakceptowane, RS zaktualizowany" + triggeruje ponowny audyt (bo zmiana RS = zmiana ograniczeń = możliwe nowe konflikty).
 Edge case: agent NIGDY nie obniża RS do non-RS samodzielnie. To zawsze user (przez rockSolid → unRockSolid).
-** QUESTION Render RS w TreePanel — wizualne odróżnienie
+** DONE Decyzja: render RS = prefiks ◆ + bold tytułu (border focus zunifikowany dla RS+ANCHOR) :decision:
 :PROPERTIES:
 :ID: n63
 :END:
-RS musi być widoczny na pierwszy rzut oka — user powinien widzieć "to jest fundament" bez czytania notes.
-Opcje (kombinowalne):
-- Prefiks ◆ (diament) lub ▣ (wypełniony kwadrat) przed tytułem — analogicznie do ❄ dla FROZEN.
-- Bold tytułu.
-- Inny kolor border panelu gdy focus na RS — sygnał "uważaj, edycja wymaga zgody".
-- Sufiks " (RS)" w tytule renderowanym (nie zapisywanym).
-Rekomendacja: prefiks ◆ + bold tytułu. Border focus zmienia się — to wspiera ANCHOR ([[n42 wzmianka w n50 notes]]), warto zunifikować dla "punktów chronionych" (RS + ANCHOR z różnymi kolorami).
-Powiązane z [[n27]] (gradient kolorów priorytetów) — RS nie powinien gryźć się z paletą priorytetów [#A].
-* DONE Poprawki TUI — refinementy ergonomiczne istniejącego interfejsu
-:PROPERTIES:
-:ID: n87
-:END:
-** DONE Poszerzyć TreePanel kosztem DetailsPanel — start od podziału 1:1
-:PROPERTIES:
-:ID: n88
-:END:
-Obecnie DetailsPanel zajmuje zbyt dużo szerokości względem drzewa, które jest głównym widokiem nawigacyjnym.
-Decyzja: split dokładnie **50/50** na start (TreePanel : DetailsPanel = 1:1).
-Lokalizacja zmiany: konfiguracja layout-slotów w main.mts przy tworzeniu okien.
-** DONE Sprawdzić, czy "Plan Root" pochodzi z pliku org czy jest artefaktem TUI
-:PROPERTIES:
-:ID: n89
-:END:
-WYNIK INVESTIGATION: "Plan Root" to **syntetyczny artefakt TUI/parsera**, nie pochodzi z pliku org.
-Lokalizacja: `OrgReader.buildTree()` (src/OrgReader.mts:234-243) — tworzy nowy Item z hardcoded id="root" i title="Plan Root", zawsze, niezależnie od zawartości pliku. Wszystkie nagłówki z pliku są dodawane jako dzieci tego sztucznego roota.
-Konsekwencje:
-- Plik .org nie musi (i nie powinien) zawierać nagłówka "Plan Root"
-- W TreePanel widzimy go jako linię na samej górze drzewa — wizualny szum
-- ID "root" jest stałe i specjalne (używane przez MCP, sprawdzane np. w deleteItem)
-Decyzja do podjęcia: ukryć "Plan Root" w renderze TreePanel — pokazywać jego dzieci jako top-level (bez wcięcia o jeden poziom). Selekcja powinna być w stanie wskazywać na root tylko jako rodzic przy operacjach `add child` na top level. Implementacja: opcja w TreePanel `hideRoot: boolean = true`.
-Status: investigation gotowa, implementacja ukrycia roota dopisana do scope (do zrobienia razem z resztą).
-** DONE Logi MCP server psują layout TUI — przekierować poza widok
-:PROPERTIES:
-:ID: n90
-:END:
-Output z serwera MCP (stdout/stderr) wycieka do terminala i rozjeżdża renderowanie TUI.
-Decyzja: wariant (b) — własny logger z buforem in-memory + dedykowany panel debug.
-- Logger przechwytuje wszystkie log events z MCP/aplikacji do ring-bufora (ostatnie N wpisów)
-- Dedykowany panel/widok debug — toggleable (klawisz np. `~` lub `?`), pokazuje zawartość bufora
-- Zastąpić wszystkie console.* w MCPServer.mts i okolicach na ten logger
-- Stdout/stderr w trybie TUI: zablokować lub przekierować, żeby nic nie wyciekło bezpośrednio do terminala
-** DONE Liczba aktywnych sesji MCP w status bar — z ikoną NerdFont
-:PROPERTIES:
-:ID: n91
-:END:
-Decyzja warunkowa:
-- Jeśli `@modelcontextprotocol/sdk` eksponuje listę aktywnych klientów lub eventy onConnect/onDisconnect → pokazać licznik liczbowy (np. " 2" z nf-fa-plug).
-- Jeśli SDK nie daje listy → porzucić licznik, ale zachować **boolean indicator podłączenia** (ikona w jednym kolorze gdy ktoś jest podłączony, w drugim gdy nikt). Lepsze niż nic — daje sygnał "agent słucha / nie słucha".
-Krok 0: sprawdzić w API SDK (Server/transport) co jest dostępne. Wybór ikony przy implementacji (nf-fa-plug / nf-md-lan_connect / nf-md-transit_connection_variant). Wymaga zależności od n92 (najpierw posprzątać statusbar, potem dodać nowy slot).
-** DONE Status bar — wyczyścić martwy kod i podpiąć realne źródła stanu
-:PROPERTIES:
-:ID: n92
-:END:
-Audyt wykazał, że z 5 elementów statusbara tylko 2 są realnie wired (focus, temporary message). Do zrobienia:
-- `[NORMAL]/[EDIT]` — `setMode()` zdefiniowane, ale nigdy nie wywoływane. Albo podpiąć (DetailsPanel.editMode → statusBar.setMode), albo usunąć slot i pole `mode` ze StatusBarState.
-- `Inbox: N` — `setInboxCount()` nigdy nie wywoływane, licznik zawsze 0. Podpiąć do realnej liczby wpisów inbox (gdy n49 zostanie zaimplementowane), albo usunąć do tego czasu.
-- `[*]` dirty — formalnie podłączone, ale `setDirty(true)` w applyTree natychmiast resetowane przez autoSave → niewidoczne. Albo usunąć, albo wyświetlać tylko gdy autosave faktycznie failuje (Save failed state).
-- `[Tree]/[Details]` focus — rozważyć usunięcie jako redundancja z wizualnym focusem na panelu (border/highlight z take4-console Focusable).
-Po sprzątnięciu — dopiero dodawać nowe elementy (n91 licznik sesji MCP, ewentualnie ID zaznaczenia).
-** DONE Zweryfikować: edycje wprowadzone przez TUI nie są widoczne przez MCP
-:PROPERTIES:
-:ID: n93
-:END:
-WYNIK INVESTIGATION: **BUG POTWIERDZONY** — edycje TUI nie propagują do MCP.
-Mechanika problemu:
-- `MCPServer` w konstruktorze otrzymuje `initialTree` i trzyma własną referencję `this.tree` (MCPServer.mts:58, 86)
-- Wszystkie resources (`tree://summary`, `tree://root`, `tree://item/<id>`) oraz `runTool` operują na `this.tree` w MCPServer
-- Gdy MCP mutuje drzewo: aktualizuje `this.tree` (linia 636) → woła `onTreeChanged(this.tree)` (linia 637) → main.mts synchronizuje się przez `handleTreeChangedFromMCP`. **OK** — kierunek MCP→TUI działa.
-- Gdy TUI mutuje drzewo (`applyMutation` → `applyTree`): main.mts:226 podmienia `this.tree = newTree`, ale **nie ma callbacka do MCPServer**. MCPServer dalej trzyma stary obiekt drzewa.
-Skutek: agent czytający `tree://summary` po edycji w TUI dostaje stan sprzed edycji. Łamie kontrakt z CLAUDE.md ("stan zawsze widoczny", "niemożliwe do zgubienia").
-PLAN NAPRAWY:
-1. Dodać `MCPServer.setTree(tree: Tree): void` — publiczna metoda aktualizująca `this.tree`.
-2. W `ApplicationState.applyTree(newTree)` (main.mts:225) zaraz po `this.tree = newTree` wywołać `this.mcpServer.setTree(newTree)`.
-3. Test: edytować notes z TUI → zapytać przez MCP o `tree://item/<id>` → powinien wrócić zaktualizowany content.
-Implementacja prosta (2-3 linijki), kluczowa dla użyteczności agenta.
-** DONE Wyświetlanie ID zadania w TreePanel — toggle włącz/wyłącz
-:PROPERTIES:
-:ID: n94
-:END:
-Opcjonalnie pokazywać krótkie ID (np. n42) obok tytułu w TreePanel — żeby przy rozmowie z agentem łatwo zacytować konkretny węzeł bez zaglądania do pliku/resources.
-Wymagania:
-- klawisz toggle (analogicznie do H = hide DONE) — kandydat: I (id)
-- render dyskretny: prefix lub suffix w ściszonym kolorze (dim/gray), żeby nie konkurował z tytułem
-- stan toggle persystowany w sesji (nie w pliku) — domyślnie OFF żeby nie zaśmiecać widoku
-- działa razem z fold/unfold i filtrami (DONE/FROZEN)
-Alternatywnie rozważyć: pokazywać ID tylko dla zaznaczonego węzła w statusbarze (powiązane z n92 — ID/tytuł zaznaczenia w status bar). Tańsze, mniej szumu w drzewie.
-** DONE Zmiana podziału TreePanel/DetailsPanel w locie — klawisz skrótu
-:PROPERTIES:
-:ID: n95
-:END:
-Po n88 (start od 50/50) — dodać możliwość interaktywnej regulacji proporcji bez restartu.
-- Klawisze: kandydaci `<` / `>` (zmniejsz/zwiększ TreePanel kosztem DetailsPanel) lub `Ctrl+←/→`
-- Krok: 5% szerokości okna (subtle, ale zauważalne)
-- Granice: minimum np. 20% dla każdego panelu (żeby żaden nie zniknął)
-- Stan persystowany w sesji (nie w pliku planu) — domyślnie 50/50 przy starcie
-- Render: re-layout obu paneli + redraw
-Powiązane z n88 — implementacja po nim (najpierw poprawne proporcje startowe, potem regulacja).
+User zaakceptował rekomendację.
+
+Decyzja: render RS = prefiks ◆ + bold tytułu. Border focus panelu zmienia kolor gdy focus na węźle chronionym — zunifikowane dla RS i ANCHOR (różne kolory). Sygnał wizualny "to jest fundament, edycja wymaga zgody".
+
+Powiązane:
+- n27 — paleta priorytetów musi pozostać czytelna obok ◆ (RS nie gryzie się z [#A] bright red).
+- n50 (ANCHOR) — ten sam mechanizm border-focus, inny kolor.
+
+Implementacja (do późniejszej iteracji):
+- TreePanel.render: prefiks ◆ gdy item.getProperties().get('ROCK-SOLID') === 't'.
+- Bold dla tytułu RS.
+- Border focus: rejestracja stylu pod warunkiem (RS/ANCHOR).
 * Agent-inbox — pomysły do triażu od agenta :agent-inbox:
 :PROPERTIES:
 :ID: n96
@@ -762,14 +693,4 @@ MVP scope (zrobione w bare-minimum z [[n71]]/[[n72]]):
 - węzeł istnieje na poziomie root
 - TUI renderuje go zawsze jako ostatnie dziecko roota (sztuczny pin na dole) — wykrywanie po property :AGENT-INBOX: t
 - brak threshold, brak add-lock, brak triage tooli
-Odłożone na potem: [[n73]] [[n74]] threshold, [[n75]] [[n77]] [[n79]] add-lock, [[n78]] triage.</notes>
-</invoke>
-* StatusBar: licznik ukrytych frozen — "(+N frozen hidden)"
-:PROPERTIES:
-:ID: n97
-:END:
-Pasek statusu w TUI nie pokazuje liczby ukrytych przez `hideFrozen` węzłów. Analogicznie do (planowanego) licznika "(+N done hidden)" — daje użytkownikowi transparentność, że coś jest przed nim ukryte.
-
-Kontekst: po implementacji FROZEN (0.7.0 → 0.8.1) w TreePanel jest toggle F + filtr kaskadowy, ale StatusBar (`src/TUI/StatusBar.mts`) nie konsumuje getterów `isHidingFrozen()`/`isHidingDone()`. To luka pierwotnie opisana w usuniętym węźle n18.
-
-Implementacja: po stronie TreePanel policzyć ukryte przez kaskadę frozen (root-level frozen i ich potomkowie razem) oraz przez hideDone; przekazać do StatusBar; render w stylu " (+3 frozen, +5 done hidden)" gdy nie-zero, schowane gdy zero.
+Odłożone na potem: [[n73]] [[n74]] threshold, [[n75]] [[n77]] [[n79]] add-lock, [[n78]] triage.
