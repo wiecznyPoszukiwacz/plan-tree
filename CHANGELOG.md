@@ -3,6 +3,149 @@
 All notable changes to plan-tree TUI are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] — 2026-05-25
+
+### Added — bezpośrednie klawisze priorytetu + hint w StatusBar
+
+W TreePanel pojawiły się klawisze `1`/`2`/`3` ustawiające priorytet `[#A]`/`[#B]`/`[#C]`
+na zaznaczonym węźle oraz `0` czyszczący priorytet. Dotychczasowy `p` (cykl
+`none → A → B → C → none`) zostaje bez zmian — przydatny gdy nie zna się
+docelowej wartości, ale dla ustawienia konkretnego priorytetu z dowolnego stanu
+wymaga do 3 wciśnięć.
+
+StatusBar w trybie NORMAL pokazuje teraz hint `1-3/0:prio  p:cycle` obok
+wskaźnika trybu — feature przestaje być niewidoczny dla użytkownika nieczytającego
+źródła. W trybie EDIT hint nie jest wyświetlany (klawisze trafiają do pola).
+
+## [0.8.1] — 2026-05-25
+
+### Changed — semantyka freeze: KASKADA
+
+Zamrożenie węzła ukrywa teraz CAŁE poddrzewo, nie tylko sam węzeł. Wcześniej
+descendant-y frozen rodzica byli widoczni jeśli nie mieli własnego `:FROZEN: t`
+— skutek: agent widział i mógł zaproponować pracę nad subtaskiem zamrożonej
+gałęzi, łamiąc intencję "ta cała gałąź jest na pauzie". Decyzja użytkownika:
+freeze = pauza całej gałęzi, kropka.
+
+Zmiana spójna w trzech miejscach:
+
+- **MCP `find`** (`TreeOperations.find`): `includeFrozen=false` (default)
+  pomija frozen węzeł i nie schodzi rekurencyjnie w jego dzieci.
+- **MCP `tree://summary`**: tak samo. `tree://summary/all` wciąż pokazuje
+  wszystko (bez kaskady).
+- **TUI** (`TreePanel.rebuildFlattenedNodes`): gdy `hideFrozen=true` (default),
+  frozen rodzic i całe jego poddrzewo są wycięte z renderu. Logika
+  `hasNonHiddenDescendant` (która pokazywała DONE-rodzica z aktywnymi dziećmi)
+  pozostała dla DONE — frozen jest twardszy semantycznie.
+
+Opisy MCP tools (`freeze`, `find`) i resource'ów zaktualizowane o słowo "cascade".
+
+## [0.8.0] — 2026-05-25
+
+Domknięcie luki n15 (FROZEN) — `tree://summary` realnie respektuje decyzję
+z n17, a TUI dostaje afordancję zamrażania, której wcześniej brakowało.
+
+### Changed — MCP
+
+- **`tree://summary` domyślnie ukrywa węzły z `:FROZEN: t`** (zgodne z `find`).
+  Dotychczas resource zwracał frozen-y z flagą `frozen: true`; agent miał je
+  na oczach i mógł niechcący zaproponować pracę nad zamrożonym taskiem.
+  Teraz są pomijane jak w `find` — descendant-y zamrożonego węzła nadal się
+  pokazują, jeśli same nie są frozen (mirror logiki `TreeOperations.find`).
+
+### Added — MCP
+
+- **Resource `tree://summary/all`** — taki sam kształt jak `tree://summary`,
+  ale zawiera też frozen (z `frozen: true`). Do użycia gdy użytkownik
+  jawnie chce inspekcjonować/odmrozić/pracować nad zamrożonym taskiem.
+  Opisy obu resource'ów i instrukcje serwera sterują agentem, żeby
+  default-em była wersja bez frozen.
+
+### Added — TUI
+
+- **Pozycja "Zamroź" / "Odmroź" w menu kontekstowym (Space)** —
+  toggle property `:FROZEN: t` na zaznaczonym węźle. Etykieta zmienia się
+  dynamicznie zależnie od aktualnego stanu. Dotychczas zamrażanie było
+  dostępne tylko przez MCP tools `freeze`/`unfreeze`; teraz da się to
+  zrobić jednym chwytem w TUI.
+
+## [0.7.0] — 2026-05-25
+
+### Added — TUI
+
+- **Menu kontekstowe pod spacją (PopupMenu).** Wciśnięcie `Space` na zaznaczonym
+  węźle w TreePanel otwiera popup obok wiersza. Nawigacja: `j`/`k` oraz strzałki
+  góra/dół. `h`/`Esc` zamyka bez akcji. `Space`/`Enter` zatwierdza wybór.
+  Pierwsza i jedyna obecna pozycja: **Usuń** — kasuje węzeł bez potwierdzenia
+  (równolegle z istniejącym `d`+`d`, które zostaje na razie nietknięte).
+  Gdy menu otwarte, wszystkie klawisze są pochłonięte i nie przechodzą do
+  globalnych skrótów drzewa. Komponent `PopupMenu` zaprojektowany jako
+  reużywalny helper — kolejne operacje (zmiana TODO, dodanie dziecka itd.)
+  trafią tu w następnych iteracjach.
+
+## [0.6.0] — 2026-05-25
+
+Pakiet poprawek TUI z gałęzi n87 — refinementy ergonomiczne, sprzątanie
+martwego kodu w statusbarze, krytyczny fix synchronizacji TUI↔MCP.
+
+### Fixed
+
+- **Edycje TUI nie propagowały do MCP (n93).** `MCPServer` trzymał własną
+  referencję `this.tree`. Mutacja z MCP aktualizowała obie strony przez
+  `onTreeChanged`, ale mutacja z TUI (np. rename z DetailsPanel) zmieniała
+  tylko stan w `ApplicationState` — MCPServer dalej widział stary obiekt
+  drzewa, więc `tree://summary` / `tree://root` zwracały stan sprzed edycji.
+  Naprawione: `MCPServer.setTree(tree)` wołane z `ApplicationState.applyTree`.
+- **Logi MCP rozjeżdżały render TUI (n90).** Sesje, błędy HTTP i autosave
+  pisały na stderr równolegle z renderem take4-console. Zastąpione przez
+  `Logger` (ring-buffer 500 wpisów) i toggleable `DebugPanel` (klawisz `` ` ``).
+  Stderr pozostaje wyłącznie dla fatalnych błędów przed startem TUI.
+
+### Added — TUI
+
+- **Agent-inbox jako sztucznie pinowany ostatni węzeł roota (n71/n72, bare-minimum).**
+  Top-level węzeł na pomysły agenta do triażu (mirror user-inboxa [[n49]]).
+  Strukturalnie zwykłe dziecko roota; TreePanel wykrywa property `:AGENT-INBOX: t`
+  i zawsze renderuje takie węzły na końcu listy dzieci roota niezależnie od
+  realnej kolejności. Pinning działa tylko na poziomie roota. Threshold,
+  add-lock i triage tools (n73-n78) odłożone — to celowo bare-minimum.
+- **Logger + DebugPanel (n90).** Singleton z ring-buforem, kolorowanie per
+  poziom (info=gray, warn=yellow, error=red), subskrypcja → auto-invalidate
+  panelu. DebugPanel domyślnie ukryty, `` ` `` toggluje.
+- **Licznik aktywnych sesji MCP w statusbarze (n91).** Po prawej stronie:
+  ikona NerdFont nf-fa-plug + liczba. 0 sesji → niewidoczne. Daje natychmiastowy
+  sygnał, czy agent jest podłączony.
+- **Toggle wyświetlania ID w TreePanel (n94).** Klawisz `I` przełącza `[n42]`
+  prefix dim/gray przy każdym węźle. Domyślnie OFF. Ułatwia cytowanie ID
+  w rozmowie z agentem bez zaglądania do pliku/resources.
+- **Runtime regulacja podziału TreePanel/DetailsPanel (n95).** Klawisze
+  `<` / `>` (i `,` / `.`) zmieniają proporcję o 5 punktów flex-grow.
+  Granice 20%/80%. Stan tylko w sesji, restart wraca do 50/50.
+- **Domyślny podział TreePanel/DetailsPanel = 50/50 (n88).** Wcześniej 35/65
+  — drzewo, główny widok nawigacyjny, było zbyt wąskie.
+- **Ukrycie syntetycznego "Plan Root" (n89-impl).** `OrgReader.buildTree`
+  zawsze dodaje syntetyczny root jako wrapper headlines z pliku. Wcześniej
+  zajmował pierwszy wiersz TreePanel. Teraz: `TreePanelOptions.hideRoot = true`
+  (w produkcji) — dzieci roota renderowane jako top-level. Test-suite używa
+  default false (widzi prawdziwy root).
+
+### Changed — Status bar (n92)
+
+- **Martwy kod usunięty:** `[*]` dirty indicator (autosave resetował flagę
+  natychmiast — nigdy widoczny), `Inbox: N` (setInboxCount nigdy nie wywoływane —
+  zawsze 0), `[Tree]/[Details]` focus marker (redundantny — take4-console
+  renderuje focus przez `BUILTIN_BORDER_FOCUSED` na borderze panelu).
+- **`[NORMAL]/[EDIT]` podpięte do realnego stanu.** `setMode` było martwe,
+  zawsze pokazywał `[NORMAL]`. Teraz `DetailsPanel` emituje `onEditModeChange`
+  do `ApplicationState`, który aktualizuje statusbar.
+
+### Investigations (n89, n93)
+
+- **"Plan Root" to artefakt parsera, nie zawartość pliku** — udokumentowane
+  w `OrgReader.mts:234-243`, hardcoded id="root"/title="Plan Root".
+- **Synchronizacja TUI↔MCP była asymetryczna** — kierunek MCP→TUI działał
+  (callback `onTreeChanged`), TUI→MCP nie istniał. Bug.
+
 ## [0.5.1] — 2026-05-24
 
 ### Fixed

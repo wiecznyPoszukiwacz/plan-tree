@@ -36,6 +36,7 @@ interface DetailsPanelState {
 export interface DetailsPanelActions {
   onSaveTitle?: (item: Item, newTitle: string) => void;
   onSaveNotes?: (item: Item, newNotes: string) => void;
+  onEditModeChange?: (mode: EditMode) => void;
 }
 
 export default class DetailsPanel extends Window implements Focusable {
@@ -158,6 +159,7 @@ export default class DetailsPanel extends Window implements Focusable {
     this.state.editMode = 'edit';
     this.state.editingField = field;
     this.state.editValue = field === 'title' ? this.state.currentItem.getTitle() : this.state.currentItem.getNotes();
+    this.actions.onEditModeChange?.('edit');
   }
 
   /**
@@ -173,9 +175,11 @@ export default class DetailsPanel extends Window implements Focusable {
    * Wychodzi z trybu edycji bez zapisu.
    */
   private exitEditMode(): void {
+    const wasEditing = this.state.editMode === 'edit';
     this.state.editMode = 'view';
     this.state.editingField = null;
     this.state.editValue = '';
+    if (wasEditing) this.actions.onEditModeChange?.('view');
   }
 
   /**

@@ -430,11 +430,14 @@ test('TreeOperations.find - priority filter', () => {
   assert.strictEqual(matches[0].priority, 'A');
 });
 
-test('TreeOperations.find - includeFrozen=false hides FROZEN nodes', () => {
+test('TreeOperations.find - includeFrozen=false cascades: hides FROZEN node AND its subtree', () => {
   const tree = createTestTree();
   const t2 = TreeOperations.setProperty(tree, 'item1', 'FROZEN', 't').newTree!;
   const hidden = JSON.parse(TreeOperations.find(t2, {}).diff!) as Array<{ id: string }>;
   const visible = JSON.parse(TreeOperations.find(t2, { includeFrozen: true }).diff!) as Array<{ id: string }>;
-  assert.strictEqual(hidden.find((m) => m.id === 'item1'), undefined, 'item1 hidden by default');
+  assert.strictEqual(hidden.find((m) => m.id === 'item1'), undefined, 'frozen item1 hidden by default');
+  assert.strictEqual(hidden.find((m) => m.id === 'item1_1'), undefined, 'item1_1 (child of frozen) also hidden — cascade');
+  assert.ok(hidden.find((m) => m.id === 'item2'), 'sibling item2 still visible');
   assert.ok(visible.find((m) => m.id === 'item1'), 'item1 visible with includeFrozen');
+  assert.ok(visible.find((m) => m.id === 'item1_1'), 'item1_1 visible with includeFrozen');
 });

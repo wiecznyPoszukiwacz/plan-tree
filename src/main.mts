@@ -17,9 +17,11 @@ import OrgReader from './OrgReader.mjs';
 import OrgWriter from './OrgWriter.mjs';
 import MCPServer from './MCPServer.mjs';
 import TreeOperations from './TreeOperations.mjs';
+import Logger from './Logger.mjs';
 import TreePanel from './TUI/TreePanel.mjs';
 import DetailsPanel from './TUI/DetailsPanel.mjs';
 import StatusBar from './TUI/StatusBar.mjs';
+import DebugPanel from './TUI/DebugPanel.mjs';
 import type { Tree, Item, TodoState } from './types.mjs';
 
 /**
@@ -60,9 +62,14 @@ class ApplicationState {
   private readonly filePath: string;
   private readonly screen: Screen;
   private readonly windowManager: WindowManager;
+  private readonly rootColumn: Window;
+  private readonly splitRow: Window;
+  private readonly treeSize: Size;
+  private readonly detailsSize: Size;
   private readonly treePanel: TreePanel;
   private readonly detailsPanel: DetailsPanel;
   private readonly statusBar: StatusBar;
+  private readonly debugPanel: DebugPanel;
   private readonly mcpServer: MCPServer;
   // Strażnik re-entry: WindowManager.stop() wywołuje swój onExit callback,
   // który u nas wraca do handleExit() — bez tej flagi mamy nieskończoną
@@ -86,30 +93,37 @@ class ApplicationState {
     this.screen = new Screen({ altScreen: true, hideCursor: true });
     this.screen.fill(' ', this.screen.registerStyle({ background: 234 }));
 
-    // Layout: Screen → rootColumn (column) → [splitRow (row), statusBar].
-    const rootColumn = new Window({
+    // Layout: Screen → rootColumn (column) → [splitRow (row), debugPanel?, statusBar].
+    this.rootColumn = new Window({
       pos: Pos.topLeft(),
       size: Size.fill(),
       layout: 'column',
     });
-    this.screen.addChild(rootColumn);
+    this.screen.addChild(this.rootColumn);
+    const rootColumn = this.rootColumn;
 
-    const splitRow = new Window({
+    this.splitRow = new Window({
       pos: Pos.flex(0),
       size: new Size(flex(1, 1), flex(1, 1)),
       layout: 'row',
     });
-    rootColumn.addChild(splitRow);
+    rootColumn.addChild(this.splitRow);
+
+    // Trzymamy Size obiekty osobno, żeby móc mutować ich `grow` w spec
+    // i dynamicznie przesuwać podział (klawisze `<` / `>`).
+    this.treeSize = new Size(flex(50, 1), flex(1, 1));
+    this.detailsSize = new Size(flex(50, 1), flex(1, 1));
 
     this.treePanel = new TreePanel(
       {
         pos: Pos.flex(0),
-        size: new Size(flex(35, 1), flex(1, 1)),
+        size: this.treeSize,
         border: { top: true, right: true, bottom: true, left: true, style: 'single' },
         label: 'Tree',
       },
       {
         rootItem: tree.root as Item,
+        hideRoot: true,
         onSelectionChanged: (item) => this.handleSelectionChanged(item),
         actions: {
           onCycleTodo: (item) => this.cycleTodo(item),
@@ -121,24 +135,49 @@ class ApplicationState {
           onIndent: (item) => this.indentItem(item),
           onOutdent: (item) => this.outdentItem(item),
           onSetPriority: (item, p) => this.applyMutation(TreeOperations.setPriority(this.tree, item.getId(), p ?? '')),
+          onToggleFreeze: (item) => {
+            const isFrozen = item.getProperties().get('FROZEN') === 't';
+            this.applyMutation(
+              isFrozen
+                ? TreeOperations.removeProperty(this.tree, item.getId(), 'FROZEN')
+                : TreeOperations.setProperty(this.tree, item.getId(), 'FROZEN', 't'),
+            );
+          },
         },
       },
     );
-    splitRow.addChild(this.treePanel);
+    this.splitRow.addChild(this.treePanel);
 
     this.detailsPanel = new DetailsPanel(
       {
         pos: Pos.flex(1),
-        size: new Size(flex(65, 1), flex(1, 1)),
+        size: this.detailsSize,
         border: { top: true, right: true, bottom: true, left: true, style: 'single' },
         label: 'Details',
       },
       {
         onSaveTitle: (item, title) => this.applyMutation(TreeOperations.rename(this.tree, item.getId(), title)),
         onSaveNotes: (item, notes) => this.applyMutation(TreeOperations.setNotes(this.tree, item.getId(), notes)),
+        onEditModeChange: (mode) => {
+          this.statusBar.setMode(mode === 'edit' ? 'edit' : 'normal');
+          this.screen.render();
+        },
       },
     );
-    splitRow.addChild(this.detailsPanel);
+    this.splitRow.addChild(this.detailsPanel);
+
+    // Debug panel — ukryty domyślnie, toggleable klawiszem `. Pokazuje
+    // zawartość Logger ring-bufora (MCP eventy, błędy autosave itp.).
+    // Wysokość 10 wierszy gdy widoczny; invisible window jest pomijany
+    // przez layout, więc nie zabiera miejsca gdy ukryty.
+    this.debugPanel = new DebugPanel({
+      pos: Pos.flex(0.5),
+      size: new Size(flex(1, 1), 10),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+      label: 'Debug log',
+    });
+    this.debugPanel.setVisible(false);
+    rootColumn.addChild(this.debugPanel);
 
     this.statusBar = new StatusBar({
       pos: Pos.flex(1),
@@ -157,13 +196,11 @@ class ApplicationState {
     // Ctrl+S — zapis. Skróty fire'ują przed handleKey kontrolki.
     this.windowManager.bindKey('1', () => {
       this.windowManager.setFocus(this.treePanel);
-      this.statusBar.setFocusedPanel('tree');
       this.screen.render();
       return true;
     });
     this.windowManager.bindKey('2', () => {
       this.windowManager.setFocus(this.detailsPanel);
-      this.statusBar.setFocusedPanel('details');
       this.screen.render();
       return true;
     });
@@ -189,6 +226,27 @@ class ApplicationState {
       this.undo();
       return true;
     });
+    // Toggle debug panel. Backtick może być dead-keyem w niektórych
+    // układach klawiatury (PL, DE) — dodatkowo `~` i `?` jako fallback.
+    const toggleDebug = (): boolean => {
+      this.debugPanel.setVisible(!this.debugPanel.isVisible());
+      // setVisible nie triggeruje reflow rodzica — wymuszamy ręcznie,
+      // żeby splitRow zwęził się o 10 wierszy gdy DebugPanel staje się
+      // widoczny (i z powrotem urósł gdy znika).
+      const sz = this.rootColumn.getSize();
+      this.rootColumn.setSize(sz.width, sz.height);
+      this.screen.render();
+      return true;
+    };
+    this.windowManager.bindKey('`', toggleDebug);
+    this.windowManager.bindKey('~', toggleDebug);
+    this.windowManager.bindKey('?', toggleDebug);
+    // < / > — zmiana podziału TreePanel / DetailsPanel o 5 punktów flex-grow.
+    // Granice 20/80–80/20: żaden panel poniżej 20%.
+    this.windowManager.bindKey('<', () => { this.adjustSplit(-5); return true; });
+    this.windowManager.bindKey(',', () => { this.adjustSplit(-5); return true; });
+    this.windowManager.bindKey('>', () => { this.adjustSplit(+5); return true; });
+    this.windowManager.bindKey('.', () => { this.adjustSplit(+5); return true; });
 
     this.mcpServer = new MCPServer(
       tree,
@@ -196,6 +254,32 @@ class ApplicationState {
       () => (this.treePanel.getSelectedItem() ?? null) as Item | null,
       3000,
     );
+    this.mcpServer.setOnSessionsChanged((count) => {
+      this.statusBar.setMcpSessions(count);
+      this.screen.render();
+    });
+  }
+
+  /**
+   * Zmienia proporcję podziału TreePanel:DetailsPanel o `delta` punktów
+   * flex-grow (TreePanel rośnie, DetailsPanel maleje przy delta>0).
+   * Mutuje grow w spec'ach Size przy zachowaniu sumy = 100; clampuje do
+   * [20, 80]. Trigger reflow przez setSize na splitRow (te same wymiary).
+   *
+   * @param delta - Ile punktów dodać do TreePanel (ujemne = zabrać)
+   */
+  private adjustSplit(delta: number): void {
+    const treeSpec = this.treeSize.getWidthSpec();
+    const detailsSpec = this.detailsSize.getWidthSpec();
+    if (treeSpec.mode !== 'flex' || detailsSpec.mode !== 'flex') return;
+    const newTree = Math.max(20, Math.min(80, treeSpec.grow + delta));
+    const newDetails = 100 - newTree;
+    if (newTree === treeSpec.grow) return;
+    treeSpec.grow = newTree;
+    detailsSpec.grow = newDetails;
+    const sz = this.splitRow.getSize();
+    this.splitRow.setSize(sz.width, sz.height);
+    this.screen.render();
   }
 
   /**
@@ -224,7 +308,7 @@ class ApplicationState {
    */
   private applyTree(newTree: Tree): void {
     this.tree = newTree;
-    this.statusBar.setDirty(true);
+    this.mcpServer.setTree(newTree);
     this.treePanel.setRootItem(newTree.root as Item);
     this.detailsPanel.setItem(this.treePanel.getSelectedItem() ?? null);
     this.screen.render();
@@ -314,7 +398,6 @@ class ApplicationState {
         this.treePanel.selectById(newChild.getId());
         // Wymuś focus na DetailsPanel i wejdź w edycję title
         this.windowManager.setFocus(this.detailsPanel);
-        this.statusBar.setFocusedPanel('details');
         this.detailsPanel.setItem(newChild);
         this.detailsPanel.beginEditTitle();
         this.screen.render();
@@ -356,7 +439,6 @@ class ApplicationState {
     this.applyTree(r2.newTree);
     this.treePanel.selectById(newId);
     this.windowManager.setFocus(this.detailsPanel);
-    this.statusBar.setFocusedPanel('details');
     this.detailsPanel.setItem(r2.newTree.itemsById.get(newId) ?? null);
     this.detailsPanel.beginEditTitle();
     this.screen.render();
@@ -450,6 +532,7 @@ class ApplicationState {
     this.exiting = true;
     this.autoSave();
     this.statusBar.stopMessageTimer();
+    this.debugPanel.dispose();
     this.mcpServer.stopServer();
     this.windowManager.stop();
     this.screen.dispose();
@@ -463,9 +546,8 @@ class ApplicationState {
   private autoSave(): void {
     try {
       FileManager.saveTree(this.tree, this.filePath);
-      this.statusBar.setDirty(false);
     } catch (error) {
-      stderr.write(`[APP] Error saving tree: ${(error as Error).message}\n`);
+      Logger.error('APP', `Error saving tree: ${(error as Error).message}`);
       this.statusBar.showMessage('Save failed!', 2500);
     }
   }
@@ -476,7 +558,6 @@ class ApplicationState {
   public start(): void {
     this.mcpServer.startServer();
     this.windowManager.setFocus(this.treePanel);
-    this.statusBar.setFocusedPanel('tree');
     this.detailsPanel.setItem(this.treePanel.getSelectedItem() ?? null);
     this.windowManager.run();
   }

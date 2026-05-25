@@ -210,6 +210,38 @@ test('TreePanel - onSelectionChanged fires on navigation', () => {
   assert.equal(selectedId, 'c');
 });
 
+test('TreePanel - 1/2/3/0 keys set priority directly via onSetPriority', () => {
+  const root = new Item('root', 'Root');
+  const calls: Array<{ id: string; p: 'A' | 'B' | 'C' | null }> = [];
+  const panel = new TreePanel(
+    {
+      pos: Pos.topLeft(),
+      size: new Size(40, 20),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+    },
+    {
+      rootItem: root,
+      actions: {
+        onSetPriority: (item, p) => calls.push({ id: item.getId(), p }),
+      },
+    },
+  );
+  screen.addChild(panel);
+  panel.setFocused(true);
+
+  panel.handleKey('1');
+  panel.handleKey('2');
+  panel.handleKey('3');
+  panel.handleKey('0');
+
+  assert.deepEqual(calls, [
+    { id: 'root', p: 'A' },
+    { id: 'root', p: 'B' },
+    { id: 'root', p: 'C' },
+    { id: 'root', p: null },
+  ]);
+});
+
 test('TreePanel - setRootItem replaces tree and resets selection', () => {
   const root1 = new Item('r1', 'Root 1');
   root1.addChild(new Item('c1', 'C1'));
@@ -297,7 +329,6 @@ test('StatusBar - constructor initializes', () => {
 
   assert.ok(bar instanceof StatusBar);
   assert.equal(bar.getMode(), 'normal');
-  assert.equal(bar.isDirty(), false);
 });
 
 test('StatusBar - setMode changes mode', () => {
@@ -308,16 +339,6 @@ test('StatusBar - setMode changes mode', () => {
 
   bar.setMode('normal');
   assert.equal(bar.getMode(), 'normal');
-});
-
-test('StatusBar - setDirty flag', () => {
-  const bar = makeBar();
-
-  bar.setDirty(true);
-  assert.equal(bar.isDirty(), true);
-
-  bar.setDirty(false);
-  assert.equal(bar.isDirty(), false);
 });
 
 test('StatusBar - render includes mode indicator', () => {
@@ -332,11 +353,11 @@ test('StatusBar - render includes mode indicator', () => {
   assert.ok(dump.includes('EDIT'), `expected 'EDIT' in:\n${dump}`);
 });
 
-test('StatusBar - render shows dirty marker', () => {
+test('StatusBar - render shows MCP session count', () => {
   const bar = makeBar();
-  bar.setDirty(true);
+  bar.setMcpSessions(3);
   const dump = dumpWindowText(bar);
-  assert.ok(dump.includes('[*]'), `expected dirty marker in:\n${dump}`);
+  assert.ok(dump.includes('3'), `expected MCP session count in:\n${dump}`);
 });
 
 test('TreePanel - handles nested hierarchy correctly', () => {
@@ -358,4 +379,264 @@ test('TreePanel - handles nested hierarchy correctly', () => {
   assert.equal(nodes[1].depth, 1);
   assert.equal(nodes[2].depth, 2);
   assert.equal(nodes[3].depth, 3);
+});
+
+test('TreePanel - child with :AGENT-INBOX: t pins to last among root children', () => {
+  const root = new Item('root', 'Root');
+  const a = new Item('a', 'A');
+  const inbox = new Item('inbox', 'Agent-inbox').setProperty('AGENT-INBOX', 't');
+  const b = new Item('b', 'B');
+  const c = new Item('c', 'C');
+
+  root.addChild(a);
+  root.addChild(inbox);
+  root.addChild(b);
+  root.addChild(c);
+
+  const panel = makeTree(root);
+  const nodes = panel.getFlattenedNodes();
+  // Order in flattened (root visible because hideRoot=false): root, A, B, C, inbox.
+  assert.equal(nodes[0].item.getId(), 'root');
+  assert.equal(nodes[1].item.getId(), 'a');
+  assert.equal(nodes[2].item.getId(), 'b');
+  assert.equal(nodes[3].item.getId(), 'c');
+  assert.equal(nodes[4].item.getId(), 'inbox');
+});
+
+/**
+ * Konstruuje TreePanel z podpiętym `onDelete` (potrzebne do testów menu).
+ *
+ * @param rootItem - Korzeń drzewa
+ * @param onDelete - Callback wywoływany przez akcję "Usuń" z menu
+ * @returns Skonfigurowany TreePanel
+ */
+function makeTreeWithDelete(
+  rootItem: Item,
+  onDelete: (item: ItemInterface) => void,
+): TreePanel {
+  const panel = new TreePanel(
+    {
+      pos: Pos.topLeft(),
+      size: new Size(40, 20),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+    },
+    { rootItem, actions: { onDelete } },
+  );
+  screen.addChild(panel);
+  return panel;
+}
+
+test('PopupMenu - space opens context menu when node selected', () => {
+  const root = new Item('root', 'Root');
+  root.addChild(new Item('c1', 'C1'));
+  const panel = makeTreeWithDelete(root, () => {});
+  panel.setFocused(true);
+
+  assert.equal(panel.getMenu().isOpen(), false);
+  panel.handleKey(' ');
+  assert.equal(panel.getMenu().isOpen(), true);
+  assert.equal(panel.getMenu().getItems().length, 1);
+  assert.equal(panel.getMenu().getItems()[0].label, 'Usuń');
+});
+
+test('PopupMenu - j/k navigate items, arrows are aliases', () => {
+  // Sztucznie wstrzykujemy dwie pozycje przez bezpośredni open() na menu,
+  // żeby przetestować nawigację niezależnie od liczby akcji w TreePanel.
+  const root = new Item('root', 'Root');
+  const panel = makeTreeWithDelete(root, () => {});
+  panel.setFocused(true);
+  panel.getMenu().open([
+    { label: 'A', action: () => {} },
+    { label: 'B', action: () => {} },
+    { label: 'C', action: () => {} },
+  ]);
+
+  assert.equal(panel.getMenu().getSelectedIndex(), 0);
+  panel.handleKey('j');
+  assert.equal(panel.getMenu().getSelectedIndex(), 1);
+  panel.handleKey('\x1b[B');
+  assert.equal(panel.getMenu().getSelectedIndex(), 2);
+  panel.handleKey('j'); // przy końcu — bez ruchu
+  assert.equal(panel.getMenu().getSelectedIndex(), 2);
+  panel.handleKey('k');
+  assert.equal(panel.getMenu().getSelectedIndex(), 1);
+  panel.handleKey('\x1b[A');
+  assert.equal(panel.getMenu().getSelectedIndex(), 0);
+});
+
+test('PopupMenu - h closes menu without action', () => {
+  let deleted = false;
+  const root = new Item('root', 'Root');
+  const panel = makeTreeWithDelete(root, () => { deleted = true; });
+  panel.setFocused(true);
+
+  panel.handleKey(' ');
+  assert.equal(panel.getMenu().isOpen(), true);
+  panel.handleKey('h');
+  assert.equal(panel.getMenu().isOpen(), false);
+  assert.equal(deleted, false);
+});
+
+test('PopupMenu - Esc closes menu without action', () => {
+  let deleted = false;
+  const root = new Item('root', 'Root');
+  const panel = makeTreeWithDelete(root, () => { deleted = true; });
+  panel.setFocused(true);
+
+  panel.handleKey(' ');
+  panel.handleKey('\x1b');
+  assert.equal(panel.getMenu().isOpen(), false);
+  assert.equal(deleted, false);
+});
+
+test('PopupMenu - Enter executes selected action and closes', () => {
+  let deletedItem: ItemInterface | null = null;
+  const root = new Item('root', 'Root');
+  const target = new Item('c1', 'C1');
+  root.addChild(target);
+  const panel = makeTreeWithDelete(root, (item) => { deletedItem = item; });
+  panel.setFocused(true);
+
+  panel.handleKey('j'); // selekcja na c1
+  panel.handleKey(' '); // otwórz menu
+  panel.handleKey('\r'); // Enter
+
+  assert.equal(panel.getMenu().isOpen(), false);
+  assert.ok(deletedItem !== null);
+  assert.equal((deletedItem as ItemInterface).getId(), 'c1');
+});
+
+test('PopupMenu - Space confirms selected action (same as Enter)', () => {
+  let deletedItem: ItemInterface | null = null;
+  const root = new Item('root', 'Root');
+  const target = new Item('c1', 'C1');
+  root.addChild(target);
+  const panel = makeTreeWithDelete(root, (item) => { deletedItem = item; });
+  panel.setFocused(true);
+
+  panel.handleKey('j');
+  panel.handleKey(' '); // otwórz
+  panel.handleKey(' '); // zatwierdź
+
+  assert.equal(panel.getMenu().isOpen(), false);
+  assert.equal((deletedItem as ItemInterface | null)?.getId(), 'c1');
+});
+
+test('PopupMenu - render draws box characters in the panel', () => {
+  const root = new Item('root', 'Root');
+  root.addChild(new Item('c1', 'C1'));
+  const panel = makeTreeWithDelete(root, () => {});
+  panel.setFocused(true);
+
+  panel.handleKey(' ');
+  const dump = dumpWindowText(panel);
+  assert.ok(dump.includes('┌'), `expected '┌' in:\n${dump}`);
+  assert.ok(dump.includes('└'), `expected '└' in:\n${dump}`);
+  assert.ok(dump.includes('Usuń'), `expected 'Usuń' in:\n${dump}`);
+});
+
+test('PopupMenu - open menu blocks tree shortcuts (j/k do not move selection)', () => {
+  const root = new Item('root', 'Root');
+  root.addChild(new Item('c1', 'C1'));
+  root.addChild(new Item('c2', 'C2'));
+  const panel = makeTreeWithDelete(root, () => {});
+  panel.setFocused(true);
+
+  panel.handleKey('j'); // selekcja na c1
+  assert.equal(panel.getSelectedIndex(), 1);
+  panel.handleKey(' '); // otwórz menu
+  // Teraz j powinien iść do menu, nie do drzewa — selekcja drzewa bez zmian.
+  panel.handleKey('j');
+  panel.handleKey('j');
+  assert.equal(panel.getSelectedIndex(), 1);
+});
+
+test('TreePanel - hideFrozen cascades: frozen parent AND its children hidden', () => {
+  const root = new Item('root', 'Root');
+  const frozenParent = new Item('fp', 'Frozen Parent').setProperty('FROZEN', 't');
+  const activeChild = new Item('ac', 'Active Child'); // no FROZEN, no DONE
+  const sibling = new Item('sib', 'Sibling');
+  frozenParent.addChild(activeChild);
+  root.addChild(frozenParent);
+  root.addChild(sibling);
+
+  const panel = new TreePanel(
+    {
+      pos: Pos.topLeft(),
+      size: new Size(40, 20),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+    },
+    { rootItem: root },
+  );
+  screen.addChild(panel);
+  panel.setFocused(true);
+
+  // hideFrozen defaultem true — frozenParent + activeChild ukryte; sibling widoczny.
+  const visibleIds = panel.getFlattenedNodes().map((n) => n.item.getId());
+  assert.ok(!visibleIds.includes('fp'), 'frozen parent hidden');
+  assert.ok(!visibleIds.includes('ac'), 'child of frozen parent hidden (cascade)');
+  assert.ok(visibleIds.includes('sib'), 'unaffected sibling visible');
+
+  // Po toggle F (pokaż frozen) — wszystkie widoczne.
+  panel.handleKey('F');
+  const allIds = panel.getFlattenedNodes().map((n) => n.item.getId());
+  assert.ok(allIds.includes('fp'));
+  assert.ok(allIds.includes('ac'));
+  assert.ok(allIds.includes('sib'));
+});
+
+test('PopupMenu - freeze entry shows "Zamroź" on unfrozen and "Odmroź" on frozen node', () => {
+  const root = new Item('root', 'Root');
+  const c1 = new Item('c1', 'C1');
+  const c2 = new Item('c2', 'C2').setProperty('FROZEN', 't');
+  root.addChild(c1);
+  root.addChild(c2);
+
+  let toggled: ItemInterface | null = null;
+  const panel = new TreePanel(
+    {
+      pos: Pos.topLeft(),
+      size: new Size(40, 20),
+      border: { top: true, right: true, bottom: true, left: true, style: 'single' },
+    },
+    { rootItem: root, actions: { onToggleFreeze: (item) => { toggled = item; } } },
+  );
+  screen.addChild(panel);
+  panel.setFocused(true);
+  panel.handleKey('F'); // pokazuj FROZEN żeby c2 było widoczne w drzewie
+
+  // selekcja na c1 (nie-frozen)
+  panel.handleKey('j');
+  panel.handleKey(' ');
+  assert.equal(panel.getMenu().isOpen(), true);
+  assert.equal(panel.getMenu().getItems()[0].label, 'Zamroź');
+  panel.handleKey('\r');
+  assert.equal((toggled as ItemInterface | null)?.getId(), 'c1');
+
+  // selekcja na c2 (frozen)
+  toggled = null;
+  panel.handleKey('j');
+  panel.handleKey(' ');
+  assert.equal(panel.getMenu().getItems()[0].label, 'Odmroź');
+  panel.handleKey('\r');
+  assert.equal((toggled as ItemInterface | null)?.getId(), 'c2');
+});
+
+test('TreePanel - pinning applies only at root level, not nested', () => {
+  const root = new Item('root', 'Root');
+  const parent = new Item('p', 'Parent');
+  const child1 = new Item('c1', 'C1').setProperty('AGENT-INBOX', 't');
+  const child2 = new Item('c2', 'C2');
+
+  parent.addChild(child1);
+  parent.addChild(child2);
+  root.addChild(parent);
+
+  const panel = makeTree(root);
+  const nodes = panel.getFlattenedNodes();
+  // Non-root parents: original order preserved.
+  assert.equal(nodes[0].item.getId(), 'root');
+  assert.equal(nodes[1].item.getId(), 'p');
+  assert.equal(nodes[2].item.getId(), 'c1');
+  assert.equal(nodes[3].item.getId(), 'c2');
 });

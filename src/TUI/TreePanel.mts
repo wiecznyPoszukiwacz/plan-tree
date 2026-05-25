@@ -11,6 +11,7 @@ import type {
   WriteTextSegment,
 } from 'take4-console';
 import type { Item } from '../types.mjs';
+import PopupMenu from './PopupMenu.mjs';
 
 /**
  * Spłaszczony węzeł drzewa dla renderowania (z głębokością i stanem expanded).
@@ -49,6 +50,11 @@ export interface TreePanelActions {
   onIndent?: (item: Item) => void;
   onOutdent?: (item: Item) => void;
   onSetPriority?: (item: Item, p: 'A' | 'B' | 'C' | null) => void;
+  /**
+   * Toggle właściwości :FROZEN: t. Implementacja w ApplicationState decyduje,
+   * czy ustawić czy usunąć property na podstawie aktualnego stanu węzła.
+   */
+  onToggleFreeze?: (item: Item) => void;
 }
 
 export interface TreePanelOptions {
@@ -56,6 +62,12 @@ export interface TreePanelOptions {
   /** Wywoływane gdy zmienia się selekcja (po j/k). */
   onSelectionChanged?: (item: Item | undefined) => void;
   actions?: TreePanelActions;
+  /**
+   * Ukrywa korzeń drzewa — render zaczyna od jego dzieci jako top-level.
+   * Używane w produkcji bo OrgReader.buildTree dorzuca syntetyczny "Plan Root"
+   * niepochodzący z pliku. Default false (testy widzą prawdziwy root).
+   */
+  hideRoot?: boolean;
 }
 
 /**
@@ -72,10 +84,16 @@ export default class TreePanel extends Window implements Focusable {
   /** Filtry widoczności — TUI-only, nie wpływają na plik ani MCP. */
   private hideDone = true;
   private hideFrozen = true;
+  /** Pokazywać ID węzłów obok tytułu (toggle przez `I`). Domyślnie OFF. */
+  private showIds = false;
   /** Bundle callbacków do ApplicationState (mutacje przez TreeOperations). */
   private actions: TreePanelActions = {};
   /** Bufor potwierdzenia delete: pierwszy 'd' arms, drugi 'd' wykonuje. */
   private deleteArmed = false;
+  /** Czy ukrywać korzeń w renderze (patrz TreePanelOptions.hideRoot). */
+  private readonly hideRoot: boolean;
+  /** Kontekstowe menu otwierane spacją na zaznaczonym węźle. */
+  private readonly menu: PopupMenu = new PopupMenu();
 
   /**
    * Tworzy TreePanel jako Window z rootItem i opcjonalnym callbackiem selekcji.
@@ -88,6 +106,7 @@ export default class TreePanel extends Window implements Focusable {
     this.rootItem = opts.rootItem;
     this.onSelectionChanged = opts.onSelectionChanged;
     this.actions = opts.actions ?? {};
+    this.hideRoot = opts.hideRoot ?? false;
     this.rebuildFlattenedNodes();
   }
 
@@ -116,6 +135,14 @@ export default class TreePanel extends Window implements Focusable {
   public toggleHideFrozen(): void {
     this.hideFrozen = !this.hideFrozen;
     this.rebuildFlattenedNodes();
+    this.invalidate();
+  }
+
+  /**
+   * Toggle wyświetlania ID węzłów obok tytułu. Domyślnie OFF.
+   */
+  public toggleShowIds(): void {
+    this.showIds = !this.showIds;
     this.invalidate();
   }
 
@@ -151,44 +178,75 @@ export default class TreePanel extends Window implements Focusable {
     const flattened: TreeNodeUI[] = [];
 
     const isFrozen = (item: Item): boolean => item.getProperties().get('FROZEN') === 't';
-    const hasNonHiddenDescendant = (item: Item): boolean => {
+    const hasNonHiddenDoneDescendant = (item: Item): boolean => {
       // Pokaż rodzica DONE jeśli ma dzieci nie-DONE (decyzja z planu n14).
+      // Frozen-subtree już odcięte w traverse — tu nie schodzimy pod frozen.
       for (const child of item.getChildren()) {
-        const childHidden = (this.hideDone && child.getTodo() === 'DONE') || (this.hideFrozen && isFrozen(child));
+        if (this.hideFrozen && isFrozen(child)) continue; // cascade: frozen subtree out
+        const childHidden = this.hideDone && child.getTodo() === 'DONE';
         if (!childHidden) return true;
-        if (hasNonHiddenDescendant(child)) return true;
+        if (hasNonHiddenDoneDescendant(child)) return true;
       }
       return false;
     };
 
-    const traverse = (item: Item, depth: number): void => {
+    const traverse = (item: Item, depth: number, skipSelf: boolean): void => {
       const id = item.getId();
       const isExpanded = this.expansionState.get(id) ?? true;
 
-      // Root zawsze widoczny.
-      const isDone = item.getTodo() === 'DONE';
-      const frozen = isFrozen(item);
-      const hideByDone = this.hideDone && isDone;
-      const hideByFrozen = this.hideFrozen && frozen;
-      const filterHides = (hideByDone || hideByFrozen) && depth > 0;
-      const keepForChildren = filterHides && hasNonHiddenDescendant(item);
+      // skipSelf = root w trybie hideRoot — nie emituj, ale przejdź do dzieci.
+      if (!skipSelf) {
+        const frozen = isFrozen(item);
+        // Cascade: frozen węzeł = "ta cała gałąź jest na pauzie" — całkowicie
+        // wycinamy poddrzewo z renderu (nie emit, nie recurse w dzieci).
+        if (this.hideFrozen && frozen && depth > 0) return;
 
-      if (!filterHides || keepForChildren) {
-        flattened.push({ item, isExpanded, depth });
+        const isDone = item.getTodo() === 'DONE';
+        const hideByDone = this.hideDone && isDone && depth > 0;
+        const keepForChildren = hideByDone && hasNonHiddenDoneDescendant(item);
+
+        if (!hideByDone || keepForChildren) {
+          flattened.push({ item, isExpanded, depth });
+        }
       }
-      if (isExpanded) {
-        for (const child of item.getChildren()) {
-          traverse(child, depth + 1);
+      if (isExpanded || skipSelf) {
+        const childDepth = skipSelf ? 0 : depth + 1;
+        const children = item === this.rootItem
+          ? this.pinAgentInboxLast(item.getChildren())
+          : item.getChildren();
+        for (const child of children) {
+          traverse(child, childDepth, false);
         }
       }
     };
 
-    traverse(this.rootItem, 0);
+    traverse(this.rootItem, 0, this.hideRoot);
     this.flattenedNodes = flattened;
 
     if (this.selectedIndex >= flattened.length) {
       this.selectedIndex = Math.max(0, flattened.length - 1);
     }
+  }
+
+  /**
+   * Sztucznie przenosi dzieci z property :AGENT-INBOX: t na koniec listy,
+   * zachowując kolejność pozostałych. Stosowane tylko dla dzieci roota,
+   * żeby agent-inbox był zawsze wizualnie ostatni (bare-minimum z n71/n72).
+   *
+   * @param children - Oryginalna lista dzieci
+   * @returns Nowa lista z agent-inboxami przeniesionymi na koniec
+   */
+  private pinAgentInboxLast(children: readonly Item[]): readonly Item[] {
+    const inbox: Item[] = [];
+    const rest: Item[] = [];
+    for (const c of children) {
+      if (c.getProperties().get('AGENT-INBOX') === 't') {
+        inbox.push(c);
+      } else {
+        rest.push(c);
+      }
+    }
+    return inbox.length === 0 ? children : [...rest, ...inbox];
   }
 
   /**
@@ -200,10 +258,24 @@ export default class TreePanel extends Window implements Focusable {
     if (!this.focused) return;
     const current = this.flattenedNodes[this.selectedIndex]?.item;
 
+    // Menu kontekstowe — gdy otwarte, pochłania wszystkie klawisze i
+    // nie pozwala im dotrzeć do globalnych skrótów drzewa.
+    if (this.menu.isOpen()) {
+      this.menu.handleKey(key);
+      this.invalidate();
+      return;
+    }
+
     // 'd' wymaga drugiego naciśnięcia (potwierdzenie delete). Każdy inny
     // klawisz resetuje arm.
     if (this.deleteArmed && key !== 'd') {
       this.deleteArmed = false;
+    }
+
+    // Space otwiera menu obok zaznaczonego węzła (jeśli jest selekcja).
+    if (key === ' ') {
+      if (current) this.openContextMenu(current);
+      return;
     }
 
     switch (key) {
@@ -213,6 +285,7 @@ export default class TreePanel extends Window implements Focusable {
       case 'l': case '\x1b[C': this.unfoldCurrent(); break;
       case 'H': this.toggleHideDone(); break;
       case 'F': this.toggleHideFrozen(); break;
+      case 'I': this.toggleShowIds(); break;
       case 't':
         if (current && this.actions.onCycleTodo) this.actions.onCycleTodo(current);
         break;
@@ -252,6 +325,18 @@ export default class TreePanel extends Window implements Focusable {
           this.actions.onSetPriority(current, next);
         }
         break;
+      case '1':
+        if (current && this.actions.onSetPriority) this.actions.onSetPriority(current, 'A');
+        break;
+      case '2':
+        if (current && this.actions.onSetPriority) this.actions.onSetPriority(current, 'B');
+        break;
+      case '3':
+        if (current && this.actions.onSetPriority) this.actions.onSetPriority(current, 'C');
+        break;
+      case '0':
+        if (current && this.actions.onSetPriority) this.actions.onSetPriority(current, null);
+        break;
     }
   }
 
@@ -260,6 +345,44 @@ export default class TreePanel extends Window implements Focusable {
    */
   public isDeleteArmed(): boolean {
     return this.deleteArmed;
+  }
+
+  /**
+   * Otwiera kontekstowe menu dla podanego węzła. Pozycje menu są zbudowane
+   * z dostępnych callbacków `actions` — obecnie tylko "Usuń" (gdy onDelete
+   * jest podpięty). Akcja wykonuje się bez potwierdzenia.
+   *
+   * @param item - Węzeł, na którym otwieramy menu
+   */
+  private openContextMenu(item: Item): void {
+    const items = [];
+    if (this.actions.onToggleFreeze) {
+      const isFrozen = item.getProperties().get('FROZEN') === 't';
+      items.push({
+        label: isFrozen ? 'Odmroź' : 'Zamroź',
+        action: () => {
+          if (this.actions.onToggleFreeze) this.actions.onToggleFreeze(item);
+        },
+      });
+    }
+    if (this.actions.onDelete) {
+      items.push({
+        label: 'Usuń',
+        action: () => {
+          if (this.actions.onDelete) this.actions.onDelete(item);
+        },
+      });
+    }
+    if (items.length === 0) return;
+    this.menu.open(items);
+    this.invalidate();
+  }
+
+  /**
+   * Zwraca handle do menu kontekstowego (do testów / diagnostyki).
+   */
+  public getMenu(): PopupMenu {
+    return this.menu;
   }
 
   /**
@@ -393,6 +516,17 @@ export default class TreePanel extends Window implements Focusable {
       this.writeText(segments, { x: 0, y: i - this.scrollOffset, style: 0 });
     }
 
+    if (this.menu.isOpen()) {
+      const selectedNode = this.flattenedNodes[this.selectedIndex];
+      const rowY = this.selectedIndex - this.scrollOffset;
+      // Kotwica popupu: wcięcie zaznaczonego wiersza + przesunięcie za
+      // ikonę expandu i znacznik TODO, tuż poniżej wiersza. Render menu
+      // sam clamp'uje do inner-area, więc nie wyleci poza panel.
+      const anchorX = selectedNode ? selectedNode.depth * 2 + 4 : 0;
+      const anchorY = rowY + 1;
+      this.menu.render(this, anchorX, anchorY);
+    }
+
     super.render();
   }
 
@@ -427,15 +561,18 @@ export default class TreePanel extends Window implements Focusable {
       : '';
     const tagsWidth = this.getTextWidth(tagsText);
 
+    const idText = this.showIds ? `[${node.item.getId()}] ` : '';
+    const idWidth = this.getTextWidth(idText);
+
     const prefixWidth = this.getTextWidth(prefix);
-    const availableForTitle = Math.max(0, innerWidth - prefixWidth - tagsWidth);
+    const availableForTitle = Math.max(0, innerWidth - prefixWidth - idWidth - tagsWidth);
     const title = node.item.getTitle();
     const titleWidth = this.getTextWidth(title);
     const truncatedTitle = titleWidth > availableForTitle
       ? this.truncateToWidth(title, Math.max(0, availableForTitle - 1)) + '…'
       : title;
 
-    const usedWidth = prefixWidth + this.getTextWidth(truncatedTitle) + tagsWidth;
+    const usedWidth = prefixWidth + idWidth + this.getTextWidth(truncatedTitle) + tagsWidth;
     const padWidth = Math.max(0, innerWidth - usedWidth);
 
     // Kolory tytułu wg: priorytetu (A=czerwony, B=pomarańczowy), QUESTION (cyjan),
@@ -450,6 +587,10 @@ export default class TreePanel extends Window implements Focusable {
     const segments: WriteTextSegment[] = [];
 
     segments.push({ text: prefix, ...(baseAttrs ? { attrs: baseAttrs } : {}) });
+    if (idText) {
+      const idAttrs: CellAttributes = { dim: true, ...(isSelected ? { inverse: true } : {}) };
+      segments.push({ text: idText, attrs: idAttrs });
+    }
     segments.push({ text: truncatedTitle, attrs: titleAttrs });
 
     if (tags.length > 0) {

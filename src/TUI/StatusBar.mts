@@ -7,13 +7,14 @@ import { Window } from 'take4-console';
 import type { StyleId, WindowProperties } from 'take4-console';
 
 /**
- * Stan paska statusu (mode, dirty flag, focused panel, inbox, tymczasowa wiadomość).
+ * Stan paska statusu (mode + tymczasowa wiadomość).
+ * Focus per panel renderuje take4-console przez BUILTIN_BORDER_FOCUSED (border),
+ * dirty flag był niewidoczny przez autosave, inbox count nie był nigdzie wired —
+ * wszystkie trzy usunięte.
  */
 interface StatusBarState {
   mode: 'normal' | 'edit';
-  isDirty: boolean;
-  focusedPanel: 'tree' | 'details' | null;
-  inboxCount: number;
+  mcpSessions: number;
   message: string;
 }
 
@@ -34,9 +35,7 @@ export default class StatusBar extends Window {
     super(wp);
     this.state = {
       mode: 'normal',
-      isDirty: false,
-      focusedPanel: null,
-      inboxCount: 0,
+      mcpSessions: 0,
       message: '',
     };
     this.inverseStyleId = this.registry.register({ inverse: true });
@@ -63,63 +62,14 @@ export default class StatusBar extends Window {
   }
 
   /**
-   * Ustawia flagę niezapisanych zmian.
+   * Ustawia liczbę aktywnych sesji MCP. 0 = brak podłączonego klienta.
    *
-   * @param isDirty - true gdy są niezapisane zmiany
+   * @param count - Liczba sesji (>= 0)
    */
-  public setDirty(isDirty: boolean): void {
-    if (this.state.isDirty === isDirty) return;
-    this.state.isDirty = isDirty;
+  public setMcpSessions(count: number): void {
+    if (this.state.mcpSessions === count) return;
+    this.state.mcpSessions = count;
     this.invalidate();
-  }
-
-  /**
-   * Zwraca flagę niezapisanych zmian.
-   *
-   * @returns true gdy są niezapisane zmiany
-   */
-  public isDirty(): boolean {
-    return this.state.isDirty;
-  }
-
-  /**
-   * Ustawia który panel ma fokus.
-   *
-   * @param panel - 'tree', 'details' lub null
-   */
-  public setFocusedPanel(panel: 'tree' | 'details' | null): void {
-    if (this.state.focusedPanel === panel) return;
-    this.state.focusedPanel = panel;
-    this.invalidate();
-  }
-
-  /**
-   * Zwraca który panel ma fokus.
-   *
-   * @returns Wskazanie panelu
-   */
-  public getFocusedPanel(): 'tree' | 'details' | null {
-    return this.state.focusedPanel;
-  }
-
-  /**
-   * Ustawia licznik elementów w inbox.
-   *
-   * @param count - Liczba elementów
-   */
-  public setInboxCount(count: number): void {
-    if (this.state.inboxCount === count) return;
-    this.state.inboxCount = count;
-    this.invalidate();
-  }
-
-  /**
-   * Zwraca licznik elementów w inbox.
-   *
-   * @returns Liczba elementów
-   */
-  public getInboxCount(): number {
-    return this.state.inboxCount;
   }
 
   /**
@@ -166,17 +116,18 @@ export default class StatusBar extends Window {
       return;
     }
 
-    const parts: string[] = [];
-    parts.push(`[${this.state.mode === 'normal' ? 'NORMAL' : 'EDIT'}]`);
-    if (this.state.isDirty) parts.push('[*]');
-    if (this.state.focusedPanel === 'tree') parts.push('[Tree]');
-    else if (this.state.focusedPanel === 'details') parts.push('[Details]');
-
+    const modeStr = `[${this.state.mode === 'normal' ? 'NORMAL' : 'EDIT'}]`;
+    // Key hints widoczne tylko w trybie normalnym (w EDIT pole tekstowe przejmuje wejście).
+    const leftStr = this.state.mode === 'normal' ? `${modeStr}  1-3/0:prio  p:cycle` : modeStr;
+    // Right side: temporary message wins; else MCP indicator (plug icon + count)
+    // when ≥1 session. 0 sesji → tylko mode po lewej.
     let rightPart = '';
-    if (this.state.message) rightPart = this.state.message;
-    else if (this.state.inboxCount > 0) rightPart = `Inbox: ${this.state.inboxCount}`;
+    if (this.state.message) {
+      rightPart = this.state.message;
+    } else if (this.state.mcpSessions > 0) {
+      rightPart = ` ${this.state.mcpSessions}`;
+    }
 
-    const leftStr = parts.join(' ');
     let line = leftStr;
     if (rightPart) {
       const padding = Math.max(1, width - this.getTextWidth(leftStr) - this.getTextWidth(rightPart));

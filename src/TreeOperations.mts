@@ -671,7 +671,10 @@ export default class TreeOperations {
       if (depth > 0) {
         const isFrozen = node.getProperties().get('FROZEN') === 't';
         if (!includeFrozen && isFrozen) {
-          // Skip frozen i całe poddrzewo? Nie — tylko sam węzeł. Dzieci wciąż mogą być aktywne.
+          // Cascade: frozen węzeł znaczy "ta cała gałąź jest na pauzie" —
+          // pomijamy także potomków (nawet jeśli sami nie mają :FROZEN: t).
+          // includeFrozen=true wyłącza tę kaskadę i pokazuje wszystko.
+          return;
         } else {
           const titleOk = titleQ === undefined || node.getTitle().toLowerCase().includes(titleQ);
           const todoOk = todoQ === undefined || node.getTodo() === todoQ;

@@ -1,6 +1,6 @@
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { stderr } from 'node:process';
+import Logger from './Logger.mjs';
 // SDK oznacza `Server` jako @deprecated z preferencją dla `McpServer`,
 // ale sam dokument SDK przyznaje: "Only use Server for advanced use cases".
 // Tu używamy raw `setRequestHandler(...)` dla pełnej kontroli nad listą
@@ -43,7 +43,9 @@ export default class MCPServer {
     'extract/absorb subtrees, rename, change TODO state, edit notes, manage tags and properties, reorder',
     'siblings (moveBefore/moveAfter), or search (find). For exploration prefer the lightweight tree://summary',
     'resource (id+title+todo+depth, no notes/properties) over tree://root, which returns the full tree with',
-    'all content. tree://item/<id> gives a single-Item subtree as JSON.',
+    'all content. tree://item/<id> gives a single-Item subtree as JSON. tree://summary and `find` skip items',
+    'with :FROZEN: t AND their whole subtree by default — the user has paused that branch, do not propose work',
+    'on it; if they explicitly ask, read tree://summary/all or call find with includeFrozen=true.',
     '',
     'AMBIENT SELECTION: every tool result and every resource response includes a `selection` field describing',
     'the currently focused TUI item: `{id, title, todo, path}` (path is the ID chain from root to selection),',
@@ -58,6 +60,7 @@ export default class MCPServer {
   private tree: Tree;
   private readonly onTreeChanged: (newTree: Tree) => void;
   private readonly getSelection: SelectionProvider;
+  private onSessionsChanged: ((count: number) => void) | null = null;
   private readonly port: number;
   private readonly host: string;
   private httpServer: HttpServer | null = null;
@@ -88,6 +91,28 @@ export default class MCPServer {
     this.getSelection = getSelection;
     this.port = port;
     this.host = host;
+  }
+
+  /**
+   * Synchronizuje wewnętrzną referencję drzewa z mutacjami ze strony TUI.
+   * Bez tego MCPServer trzymałby przestarzałą referencję, a agent czytałby
+   * stan sprzed edycji z TUI.
+   *
+   * @param tree - Aktualne drzewo (z ApplicationState.applyTree)
+   */
+  public setTree(tree: Tree): void {
+    this.tree = tree;
+  }
+
+  /**
+   * Rejestruje callback wywoływany przy każdej zmianie liczby aktywnych
+   * sesji (połączenie / rozłączenie klienta). Używany przez TUI do renderu
+   * licznika w statusbarze.
+   *
+   * @param cb - Funkcja przyjmująca aktualną liczbę sesji
+   */
+  public setOnSessionsChanged(cb: (count: number) => void): void {
+    this.onSessionsChanged = cb;
   }
 
   /**
@@ -134,13 +159,14 @@ export default class MCPServer {
     });
 
     this.httpServer.listen(this.port, this.host, () => {
-      stderr.write(
-        `[MCP] HTTP server listening on http://${this.host}:${this.port}/mcp, items=${this.tree.itemsById.size}\n`,
+      Logger.info(
+        'MCP',
+        `HTTP server listening on http://${this.host}:${this.port}/mcp, items=${this.tree.itemsById.size}`,
       );
     });
 
     this.httpServer.on('error', (error: Error) => {
-      stderr.write(`[MCP] HTTP server error: ${error.message}\n`);
+      Logger.error('MCP', `HTTP server error: ${error.message}`);
     });
   }
 
@@ -174,7 +200,7 @@ export default class MCPServer {
     }
 
     transport.handleRequest(req, res).catch((error: Error) => {
-      stderr.write(`[MCP] handleRequest error: ${error.message}\n`);
+      Logger.error('MCP', `handleRequest error: ${error.message}`);
       if (!res.headersSent) {
         res.statusCode = 500;
         res.end('Internal error');
@@ -192,7 +218,7 @@ export default class MCPServer {
    */
   private createSession(): StreamableHTTPServerTransport {
     const server = new Server(
-      { name: 'plan-tree-tui', version: '0.5.0' },
+      { name: 'plan-tree-tui', version: '0.6.0' },
       {
         capabilities: { tools: {}, resources: {} },
         instructions: MCPServer.SERVER_INSTRUCTIONS,
@@ -204,7 +230,8 @@ export default class MCPServer {
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (sid: string) => {
         this.sessions.set(sid, { server, transport });
-        stderr.write(`[MCP] Session ${sid.slice(0, 8)} initialized (${this.sessions.size} active)\n`);
+        Logger.info('MCP', `Session ${sid.slice(0, 8)} initialized (${this.sessions.size} active)`);
+        this.onSessionsChanged?.(this.sessions.size);
       },
     });
 
@@ -212,12 +239,13 @@ export default class MCPServer {
       const sid = transport.sessionId;
       if (sid && this.sessions.has(sid)) {
         this.sessions.delete(sid);
-        stderr.write(`[MCP] Session ${sid.slice(0, 8)} closed (${this.sessions.size} active)\n`);
+        Logger.info('MCP', `Session ${sid.slice(0, 8)} closed (${this.sessions.size} active)`);
+        this.onSessionsChanged?.(this.sessions.size);
       }
     };
 
     server.connect(transport).catch((error: Error) => {
-      stderr.write(`[MCP] Failed to connect new session: ${error.message}\n`);
+      Logger.error('MCP', `Failed to connect new session: ${error.message}`);
     });
 
     return transport;
@@ -382,7 +410,7 @@ export default class MCPServer {
       },
       {
         name: 'freeze',
-        description: 'Mark an Item as frozen (paused, not actively worked on). Sets property :FROZEN: t. Distinct from DROPPED (abandoned): frozen items can be resumed. Frozen items are hidden from `find` and `tree://summary` by default — pass includeFrozen=true to see them.',
+        description: 'Mark an Item as frozen (paused, not actively worked on). Sets property :FROZEN: t. Distinct from DROPPED (abandoned): frozen items can be resumed. Freezing cascades: the frozen Item AND its entire subtree are hidden from `find` and `tree://summary` by default — pass includeFrozen=true (or read tree://summary/all) to see them.',
         inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
       },
       {
@@ -405,7 +433,7 @@ export default class MCPServer {
       {
         name: 'find',
         description:
-          'Search the tree. All filters AND-combined; omit a filter to skip it. Returns the matches as a JSON array in the `diff` field: [{id, title, todo, tags, depth, priority?}]. By default frozen items (with :FROZEN: t) are hidden — pass includeFrozen=true to include them. Use instead of reading tree://root when the tree is large.',
+          'Search the tree. All filters AND-combined; omit a filter to skip it. Returns the matches as a JSON array in the `diff` field: [{id, title, todo, tags, depth, priority?}]. By default frozen items (with :FROZEN: t) AND their whole subtree are hidden (cascade) — pass includeFrozen=true to include them. Use instead of reading tree://root when the tree is large.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -661,10 +689,22 @@ export default class MCPServer {
       {
         uri: 'tree://summary',
         mimeType: 'application/json',
-        name: 'Tree summary (lightweight)',
+        name: 'Tree summary (lightweight, excludes frozen)',
         description:
           'Compact tree overview: array of {id, title, todo, tags, depth} in DFS order. ' +
-          'No notes, no properties, no nesting JSON. Use this first to see structure cheaply.',
+          'No notes, no properties, no nesting JSON. Use this first to see structure cheaply. ' +
+          'Items with :FROZEN: t are hidden together with their entire subtree (cascade) — a frozen ' +
+          'node means "this whole branch is paused", so descendants disappear even if not frozen themselves. ' +
+          'Use tree://summary/all when the user explicitly asks to inspect or work on a frozen branch.',
+      },
+      {
+        uri: 'tree://summary/all',
+        mimeType: 'application/json',
+        name: 'Tree summary (lightweight, includes frozen)',
+        description:
+          'Same shape as tree://summary but includes items with :FROZEN: t (their entries carry frozen:true). ' +
+          'Use only when the user explicitly asks to inspect/unfreeze/work on a frozen task — ' +
+          'default exploration should go through tree://summary so frozen items stay out of sight.',
       },
       {
         uri: 'tree://root',
@@ -699,10 +739,15 @@ export default class MCPServer {
    * @returns Odpowiedź resources/read w formacie MCP
    */
   private readResource(uri: string): { contents: Array<{ uri: string; mimeType: string; text: string }> } {
-    if (uri === 'tree://summary') {
+    if (uri === 'tree://summary' || uri === 'tree://summary/all') {
+      const includeFrozen = uri === 'tree://summary/all';
       const summary: Array<{ id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C'; frozen?: true }> = [];
       const walk = (node: Tree['root'], depth: number): void => {
         const isFrozen = node.getProperties().get('FROZEN') === 't';
+        // Mirror TreeOperations.find cascade: a frozen node hides the entire
+        // subtree — "this whole branch is paused", not just this single node.
+        // tree://summary/all opts out of the cascade.
+        if (isFrozen && !includeFrozen) return;
         const entry: typeof summary[number] = {
           id: node.getId(),
           title: node.getTitle(),
@@ -778,10 +823,10 @@ export default class MCPServer {
     // Zamykamy wszystkie aktywne sesje — każda ma własny transport+server
     for (const { server, transport } of this.sessions.values()) {
       transport.close().catch((error: Error) => {
-        stderr.write(`[MCP] transport.close error: ${error.message}\n`);
+        Logger.error('MCP', `transport.close error: ${error.message}`);
       });
       server.close().catch((error: Error) => {
-        stderr.write(`[MCP] server.close error: ${error.message}\n`);
+        Logger.error('MCP', `server.close error: ${error.message}`);
       });
     }
     this.sessions.clear();
@@ -790,11 +835,11 @@ export default class MCPServer {
       this.httpServer.closeAllConnections?.();
       this.httpServer.close((error) => {
         if (error) {
-          stderr.write(`[MCP] http close error: ${error.message}\n`);
+          Logger.error('MCP', `http close error: ${error.message}`);
         }
       });
       this.httpServer = null;
-      stderr.write(`[MCP] Server stopped\n`);
+      Logger.info('MCP', 'Server stopped');
     }
   }
 }
