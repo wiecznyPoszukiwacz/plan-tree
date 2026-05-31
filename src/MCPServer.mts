@@ -46,6 +46,24 @@ export default class MCPServer {
     'with :FROZEN: t AND their whole subtree by default — the user has paused that branch, do not propose work',
     'on it; if they explicitly ask, read tree://summary/all or call find with includeFrozen=true.',
     '',
+    'ANCHORS: Items with :ANCHOR: t in their properties are user-locked — a contract that you do NOT modify',
+    'them. Anchoring CASCADES to the whole subtree: every mutation touching an anchored node, anything inside',
+    'its subtree, OR any non-anchored ancestor whose removal/relocation would destroy it (rename/setTodo/',
+    'setNotes/move/delete/extract/absorb/merge/reorder/add-child/setProperty) is REJECTED with a clear message.',
+    'Treat anchored items as INPUTS to your reasoning — design your proposals AROUND them, not over them. The',
+    '`anchor` tool lets you lock a node on the user\'s request; there is deliberately NO unanchor tool and the',
+    'ANCHOR property is protected from setProperty/removeProperty — only the user can unanchor, via the TUI',
+    '(Shift+A). If you genuinely need to change an anchored item, surface that need to the user explicitly',
+    '("n42 is anchored — may I change it, or should I design an alternative?"); never attempt to unanchor',
+    'silently. Anchored items carry `anchored: true` in tree://summary and find results so you spot them at once.',
+    '',
+    'ASSUMED TAG: the tag `assumed` is orthogonal to the TODO keyword (a node can be PROPOSAL+assumed,',
+    'WORK-UNIT+assumed, etc.). It is YOUR (the agent\'s) safety flag, meaning "I went ahead down this path —',
+    'confirm before I dig deeper". Whenever you proceed on an assumption the user might want to reverse,',
+    'addTag(id, "assumed") instead of continuing silently. Remove it (removeTag) once the user confirms.',
+    'It renders in amber in the TUI so the user can spot un-confirmed assumptions at a glance. Distinct from',
+    'PROPOSAL (= "your call, I am waiting"): assumed = "I already moved, veto if wrong".',
+    '',
     'AMBIENT SELECTION: every tool result and every resource response includes a `selection` field describing',
     'the currently focused TUI item: `{id, title, todo, path}` (path is the ID chain from root to selection),',
     'or `null` when nothing is focused. Use this to disambiguate user references like "this", "the current task",',
@@ -60,6 +78,7 @@ export default class MCPServer {
   private readonly onTreeChanged: (newTree: Tree, affectedId: string | null) => void;
   private readonly getSelection: SelectionProvider;
   private onLastCallChanged: ((ts: Date, tool: string) => void) | null = null;
+  private onItemsTouched: ((ids: string[]) => void) | null = null;
   private readonly port: number;
   private readonly host: string;
   private httpServer: HttpServer | null = null;
@@ -108,6 +127,18 @@ export default class MCPServer {
    */
   public setOnLastCallChanged(cb: (ts: Date, tool: string) => void): void {
     this.onLastCallChanged = cb;
+  }
+
+  /**
+   * Rejestruje callback wywoływany gdy MCP dotknie węzłów bez ich mutacji
+   * (odczyt: find, tree://item/<id>). TUI podświetla je przelotnie (flash),
+   * nigdy nie przenosząc selekcji — to ścieżka odrębna od onTreeChanged,
+   * bez applyTree/pushUndo.
+   *
+   * @param cb - Funkcja przyjmująca listę ID dotkniętych węzłów
+   */
+  public setOnItemsTouched(cb: (ids: string[]) => void): void {
+    this.onItemsTouched = cb;
   }
 
   /**
@@ -375,6 +406,11 @@ export default class MCPServer {
         inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
       },
       {
+        name: 'anchor',
+        description: 'Lock an Item as a user anchor — sets property :ANCHOR: t. Anchored items are CONTRACT INPUTS: their value/structure stays fixed and you must design around them. Anchoring cascades to the whole subtree — every mutation touching the anchored node, anything in its subtree, or an ancestor whose removal would destroy it is rejected. Use only on the user\'s request. There is NO unanchor tool: only the user can remove an anchor, via the TUI (Shift+A). Distinct from freeze (which hides a paused branch); an anchor stays visible and active but immutable-by-agent.',
+        inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
+      },
+      {
         name: 'setPriority',
         description: 'Set or clear the org-mode priority cookie [#A]/[#B]/[#C]. Pass null/empty to clear. [#A]=highest, [#C]=lowest. No priority is the default.',
         inputSchema: {
@@ -626,6 +662,9 @@ export default class MCPServer {
         case 'unfreeze':
           result = TreeOperations.removeProperty(this.tree, args.itemId as string, 'FROZEN');
           break;
+        case 'anchor':
+          result = TreeOperations.anchor(this.tree, args.itemId as string);
+          break;
         case 'setPriority':
           result = TreeOperations.setPriority(this.tree, args.itemId as string, args.priority as string);
           break;
@@ -653,6 +692,16 @@ export default class MCPServer {
         result.affectedId ??
         (typeof args.itemId === 'string' ? args.itemId : null);
       this.onTreeChanged(this.tree, affectedId);
+    } else if (name === 'find' && result.success && typeof result.diff === 'string') {
+      // find nie mutuje drzewa — to odczyt. Podświetl trafienia (flash),
+      // bez ruszania selekcji. diff to JSON tablicy {id,...} z TreeOperations.find.
+      try {
+        const matches = JSON.parse(result.diff) as Array<{ id?: string }>;
+        const ids = matches.map((m) => m.id).filter((id): id is string => typeof id === 'string');
+        if (ids.length > 0) this.onItemsTouched?.(ids);
+      } catch {
+        // diff nie-parsowalny — pomiń flash, to tylko wskaźnik wizualny.
+      }
     }
 
     const line = MCPServer.formatToolCall(name, args) + ' → ' + (result.success ? 'ok' : 'fail: ' + result.message);
@@ -735,7 +784,7 @@ export default class MCPServer {
   private readResource(uri: string): { contents: Array<{ uri: string; mimeType: string; text: string }> } {
     if (uri === 'tree://summary' || uri === 'tree://summary/all') {
       const includeFrozen = uri === 'tree://summary/all';
-      const summary: Array<{ id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C'; frozen?: true }> = [];
+      const summary: Array<{ id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C'; frozen?: true; anchored?: true }> = [];
       const walk = (node: Tree['root'], depth: number): void => {
         const isFrozen = node.getProperties().get('FROZEN') === 't';
         // Mirror TreeOperations.find cascade: a frozen node hides the entire
@@ -752,6 +801,7 @@ export default class MCPServer {
         const p = node.getPriority();
         if (p) entry.priority = p;
         if (isFrozen) entry.frozen = true;
+        if (node.getProperties().get('ANCHOR') === 't') entry.anchored = true;
         summary.push(entry);
         for (const child of node.getChildren()) walk(child, depth + 1);
       };
@@ -778,6 +828,8 @@ export default class MCPServer {
       if (!item) {
         throw new Error(`Item ${itemId} not found`);
       }
+      // Odczyt pojedynczego węzła — flash w TUI, bez ruszania selekcji.
+      this.onItemsTouched?.([itemId]);
       return {
         contents: [
           {

@@ -18,6 +18,7 @@ interface StatusBarState {
   mcpLastCallTool: string;
   message: string;
   frozenHidden: number;
+  followMode: boolean;
 }
 
 /**
@@ -41,6 +42,7 @@ export default class StatusBar extends Window {
       mcpLastCallTool: '',
       message: '',
       frozenHidden: 0,
+      followMode: false,
     };
     this.inverseStyleId = this.registry.register({ inverse: true });
   }
@@ -82,6 +84,18 @@ export default class StatusBar extends Window {
   public setFrozenHidden(n: number): void {
     if (this.state.frozenHidden === n) return;
     this.state.frozenHidden = n;
+    this.invalidate();
+  }
+
+  /**
+   * Ustawia stan trybu follow. Gdy ON, w lewej części statusbara (tryb NORMAL)
+   * pojawia się znacznik `⟳follow` — sygnał, że MCP przenosi selekcję.
+   *
+   * @param on - Czy follow jest aktywny
+   */
+  public setFollowMode(on: boolean): void {
+    if (this.state.followMode === on) return;
+    this.state.followMode = on;
     this.invalidate();
   }
 
@@ -140,8 +154,11 @@ export default class StatusBar extends Window {
     const frozenSuffix = this.state.mode === 'normal' && this.state.frozenHidden > 0
       ? `  (+${this.state.frozenHidden} frozen)`
       : '';
+    const followSuffix = this.state.mode === 'normal' && this.state.followMode
+      ? '  ⟳follow'
+      : '';
     const leftStr = this.state.mode === 'normal'
-      ? `${modeStr}  1-3/0:prio  p:cycle${frozenSuffix}`
+      ? `${modeStr}  1-3/0:prio  p:cycle  f:follow${frozenSuffix}${followSuffix}`
       : modeStr;
     // Right side: temporary message wins; else MCP last-call indicator
     // (icon + HH:MM:SS + tool name) gdy jakiekolwiek wywołanie miało miejsce.

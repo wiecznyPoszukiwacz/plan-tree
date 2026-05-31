@@ -35,6 +35,13 @@ export default class TreeOperations {
       };
     }
 
+    // Split mutates the original node's title; anchored descendants stay intact
+    // under part1, so an upward check suffices.
+    const splitAnchor = this.findAnchorAtOrAbove(tree, itemId);
+    if (splitAnchor) {
+      return this.anchorBlocked(splitAnchor, `split ${itemId}`);
+    }
+
     const title = item.getTitle();
     const part1 = title.substring(0, position);
     const part2 = title.substring(position);
@@ -137,6 +144,15 @@ export default class TreeOperations {
       };
     }
 
+    // Merge destroys item2 and relocates its children into item1; block when
+    // either item (self/ancestor/descendant) is anchored.
+    const mergeAnchor =
+      this.findAnchorAtOrBelow(tree, itemId1) ?? this.findAnchorAtOrAbove(tree, itemId1) ??
+      this.findAnchorAtOrBelow(tree, itemId2) ?? this.findAnchorAtOrAbove(tree, itemId2);
+    if (mergeAnchor) {
+      return this.anchorBlocked(mergeAnchor, `merge ${itemId1}/${itemId2}`);
+    }
+
     const newRoot = tree.root.clone();
 
     // Scala tytuły bez separatora (zgodnie z docstring/MCP tool description).
@@ -217,6 +233,14 @@ export default class TreeOperations {
         message: `Cannot extract root item`,
       };
     }
+
+    // Extract destroys the node and promotes its children; block when the node,
+    // an ancestor, or a descendant is anchored.
+    const extractAnchor = this.findAnchorAtOrBelow(tree, itemId) ?? this.findAnchorAtOrAbove(tree, itemId);
+    if (extractAnchor) {
+      return this.anchorBlocked(extractAnchor, `extract ${itemId}`);
+    }
+
     const parentId = this.findParentId(tree, itemId);
 
     const newRoot = tree.root.clone();
@@ -274,6 +298,13 @@ export default class TreeOperations {
         success: false,
         message: `Cannot absorb root item`,
       };
+    }
+
+    // Absorb destroys the node, merges its content into the parent and relocates
+    // its children; block when the node, an ancestor, or a descendant is anchored.
+    const absorbAnchor = this.findAnchorAtOrBelow(tree, itemId) ?? this.findAnchorAtOrAbove(tree, itemId);
+    if (absorbAnchor) {
+      return this.anchorBlocked(absorbAnchor, `absorb ${itemId}`);
     }
 
     const parentId = this.findParentId(tree, itemId);
@@ -371,6 +402,17 @@ export default class TreeOperations {
         success: false,
         message: `Cannot move item to its own descendant (would create cycle)`,
       };
+    }
+
+    // Block moving an anchored/within-anchored node (self/ancestor/descendant),
+    // and block moving anything INTO an anchored subtree (target chain).
+    const moveAnchor = this.findAnchorAtOrBelow(tree, itemId) ?? this.findAnchorAtOrAbove(tree, itemId);
+    if (moveAnchor) {
+      return this.anchorBlocked(moveAnchor, `move ${itemId}`);
+    }
+    const targetAnchor = this.findAnchorAtOrAbove(tree, targetParentId);
+    if (targetAnchor) {
+      return this.anchorBlocked(targetAnchor, `move ${itemId} into ${targetParentId}`);
     }
 
     const newRoot = tree.root.clone();
@@ -495,6 +537,9 @@ export default class TreeOperations {
     if (key === 'ID') {
       return { success: false, message: `Property "ID" is protected — use the auto-generated value` };
     }
+    if (key === 'ANCHOR') {
+      return { success: false, message: `Property "ANCHOR" is protected — use the "anchor" tool; unanchoring is user-only via the TUI (Shift+A)` };
+    }
     if (key.length === 0 || /[\s:]/.test(key)) {
       return { success: false, message: `Invalid property key "${key}"` };
     }
@@ -508,7 +553,93 @@ export default class TreeOperations {
     if (key === 'ID') {
       return { success: false, message: `Property "ID" is protected and cannot be removed` };
     }
+    if (key === 'ANCHOR') {
+      return { success: false, message: `Property "ANCHOR" is protected — unanchoring is user-only via the TUI (Shift+A)` };
+    }
     return this.mutateItem(tree, itemId, (item) => item.removeProperty(key), `removeProperty: ${itemId} -${key}`);
+  }
+
+  // ============ Anchor (kontrakt user/agent) ============
+
+  /**
+   * Kotwiczy węzeł — ustawia property :ANCHOR: t. Zakotwiczony węzeł i całe
+   * jego poddrzewo są chronione przed mutacją (rename/setTodo/setNotes/move/
+   * delete/extract/absorb/merge/reorder). Pomija guard, bo kotwiczenie tylko
+   * zwiększa ochronę. Odkotwiczenie dostępne wyłącznie z TUI (brak tool MCP).
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła do zakotwiczenia
+   * @returns OperationResult
+   */
+  public static anchor(tree: Tree, itemId: string): OperationResult {
+    return this.mutateItem(tree, itemId, (item) => item.setProperty('ANCHOR', 't'), `anchor: ${itemId}`, true);
+  }
+
+  /**
+   * Odkotwicza węzeł — usuwa property :ANCHOR:. Pomija guard (to jedyna ścieżka
+   * zdjęcia kotwicy). Wywoływane tylko z TUI (Shift+A) — agent nie ma tego tool.
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła do odkotwiczenia
+   * @returns OperationResult
+   */
+  public static unanchor(tree: Tree, itemId: string): OperationResult {
+    return this.mutateItem(tree, itemId, (item) => item.removeProperty('ANCHOR'), `unanchor: ${itemId}`, true);
+  }
+
+  /**
+   * Szuka zakotwiczonego węzła wśród itemId i jego przodków (w górę do korzenia).
+   * Używane przez guard mutacji treści — modyfikacja czegokolwiek wewnątrz
+   * zakotwiczonego poddrzewa jest zablokowana.
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła startowego
+   * @returns ID najbliższego zakotwiczonego węzła (self/przodek) lub null
+   */
+  private static findAnchorAtOrAbove(tree: Tree, itemId: string): string | null {
+    let cursor: string | null = itemId;
+    while (cursor) {
+      const node = tree.itemsById.get(cursor) as any;
+      if (node && node.getProperties().get('ANCHOR') === 't') return cursor;
+      cursor = this.findParentId(tree, cursor);
+    }
+    return null;
+  }
+
+  /**
+   * Szuka zakotwiczonego węzła wśród itemId i jego potomków (w dół poddrzewa).
+   * Używane przez guard operacji niszczących/przenoszących — usunięcie lub
+   * przeniesienie nieanchorowanego węzła nie może zniszczyć/relokować
+   * zakotwiczonego potomka (żelazna kotwica całego poddrzewa).
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła startowego
+   * @returns ID pierwszego znalezionego zakotwiczonego węzła (self/potomek) lub null
+   */
+  private static findAnchorAtOrBelow(tree: Tree, itemId: string): string | null {
+    const item = tree.itemsById.get(itemId) as any;
+    if (!item) return null;
+    const stack: any[] = [item];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (node.getProperties().get('ANCHOR') === 't') return node.getId();
+      for (const child of node.getChildren()) stack.push(child);
+    }
+    return null;
+  }
+
+  /**
+   * Buduje OperationResult odrzucający operację z powodu kotwicy.
+   *
+   * @param anchorId - ID zakotwiczonego węzła, który zablokował operację
+   * @param attempted - Opis próbowanej operacji (np. "delete n5")
+   * @returns OperationResult z success:false i czytelnym komunikatem
+   */
+  private static anchorBlocked(anchorId: string, attempted: string): OperationResult {
+    return {
+      success: false,
+      message: `Item ${anchorId} is anchored (user-locked); cannot ${attempted}. Ask the user to unanchor it via the TUI (Shift+A) — never attempt to unanchor silently.`,
+    };
   }
 
   // ============ Wspólny szkielet mutacji single-item ============
@@ -528,6 +659,7 @@ export default class TreeOperations {
     itemId: string,
     transform: (item: any) => any,
     diff: string,
+    skipAnchorGuard: boolean = false,
   ): OperationResult {
     const original = tree.itemsById.get(itemId) as any;
     if (!original) {
@@ -535,6 +667,15 @@ export default class TreeOperations {
     }
     if (itemId === tree.root.getId()) {
       return { success: false, message: `Cannot mutate root item` };
+    }
+    // Content mutation: blocked when the node itself or any ancestor is anchored
+    // (the anchored subtree is user-locked). The dedicated anchor()/unanchor()
+    // pass skipAnchorGuard=true — they are the only sanctioned ANCHOR-key writers.
+    if (!skipAnchorGuard) {
+      const anchoredAt = this.findAnchorAtOrAbove(tree, itemId);
+      if (anchoredAt) {
+        return this.anchorBlocked(anchoredAt, `modify ${itemId}`);
+      }
     }
 
     const newRoot = tree.root.clone();
@@ -595,6 +736,13 @@ export default class TreeOperations {
     }
     if (parentItemId !== parentSiblingId) {
       return { success: false, message: `Items are not siblings — use 'move' first to bring them under a common parent` };
+    }
+
+    // Reorder relocates the node among its siblings; block when the node, an
+    // ancestor (the shared parent's subtree is locked), or a descendant is anchored.
+    const reorderAnchor = this.findAnchorAtOrBelow(tree, itemId) ?? this.findAnchorAtOrAbove(tree, itemId);
+    if (reorderAnchor) {
+      return this.anchorBlocked(reorderAnchor, `reorder ${itemId}`);
     }
 
     const newRoot = tree.root.clone();
@@ -665,7 +813,7 @@ export default class TreeOperations {
     const priorityQ = filters.priority;
     const includeFrozen = filters.includeFrozen ?? false;
 
-    const matches: Array<{ id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C' }> = [];
+    const matches: Array<{ id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C'; anchored?: true }> = [];
 
     const walk = (node: any, depth: number): void => {
       if (depth > 0) {
@@ -681,7 +829,7 @@ export default class TreeOperations {
           const tagOk = tagQ === undefined || node.getTags().includes(tagQ);
           const prioOk = priorityQ === undefined || node.getPriority() === priorityQ;
           if (titleOk && todoOk && tagOk && prioOk) {
-            const entry: { id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C' } = {
+            const entry: { id: string; title: string; todo: string; tags: string[]; depth: number; priority?: 'A' | 'B' | 'C'; anchored?: true } = {
               id: node.getId(),
               title: node.getTitle(),
               todo: node.getTodo(),
@@ -690,6 +838,7 @@ export default class TreeOperations {
             };
             const p = node.getPriority();
             if (p) entry.priority = p;
+            if (node.getProperties().get('ANCHOR') === 't') entry.anchored = true;
             matches.push(entry);
           }
         }
@@ -738,6 +887,13 @@ export default class TreeOperations {
         success: false,
         message: `Title must not be empty`,
       };
+    }
+
+    // Adding a child mutates the parent's subtree; block when the parent or any
+    // of its ancestors is anchored.
+    const addAnchor = this.findAnchorAtOrAbove(tree, parentId);
+    if (addAnchor) {
+      return this.anchorBlocked(addAnchor, `add a child under ${parentId}`);
     }
 
     const todoState = (todo ?? 'TODO') as any;
@@ -809,6 +965,14 @@ export default class TreeOperations {
         success: false,
         message: `Cannot delete root item`,
       };
+    }
+
+    // Delete cascades over the whole subtree; block when the node, an ancestor,
+    // or any descendant is anchored — otherwise a non-anchored parent could
+    // destroy an anchored child.
+    const deleteAnchor = this.findAnchorAtOrBelow(tree, itemId) ?? this.findAnchorAtOrAbove(tree, itemId);
+    if (deleteAnchor) {
+      return this.anchorBlocked(deleteAnchor, `delete ${itemId}`);
     }
 
     const newRoot = tree.root.clone();

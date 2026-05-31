@@ -3,6 +3,126 @@
 All notable changes to plan-tree TUI are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] — 2026-05-31
+
+### Added — ANCHOR: punkty nietykalne przez agenta (n40)
+
+- **`:ANCHOR: t` jako property** (wzorzec FROZEN, ale inna semantyka):
+  kontrakt user/agent, że agent NIE modyfikuje zakotwiczonego węzła.
+  W odróżnieniu od FROZEN nie ukrywa gałęzi — węzeł zostaje widoczny
+  i aktywny, lecz niemodyfikowalny przez agenta.
+- **Kaskada na całe poddrzewo (decyzja: żelazna kotwica)**. Guard
+  w `TreeOperations` blokuje każdą mutację dotykającą zakotwiczonego
+  węzła:
+  - edycje treści (`rename`/`setTodo`/`setNotes`/tagi/priorytet/
+    `setProperty`) — gdy węzeł **lub przodek** jest zakotwiczony (up),
+  - operacje niszczące/przenoszące (`delete`/`move`/`extract`/`absorb`/
+    `merge`/reorder/`add`-child) — gdy węzeł, **przodek lub potomek**
+    jest zakotwiczony (up+down). Dzięki temu nieanchorowany rodzic nie
+    może usunąć ani zrelokować zakotwiczonego dziecka.
+- **MCP tool `anchor`** — agent może zakotwiczyć węzeł na prośbę usera.
+  Świadomie **brak** toola `unanchor`; klucz `ANCHOR` jest chroniony
+  w `setProperty`/`removeProperty`. Jedyna ścieżka odkotwiczenia to
+  TUI (**Shift+A**) — kontrakt „tylko user zdejmuje kotwicę".
+- **TUI:** klawisz `Shift+A` (toggle), pozycja „Zakotwicz/Odkotwicz"
+  w menu kontekstowym, render `📌` w prefiksie + **bold** tytułu,
+  feedback `Anchored nN`/`Unanchored nN` w StatusBar.
+- **Świadomość agenta:** `SERVER_INSTRUCTIONS` opisują kontrakt i kaskadę;
+  `find` oraz `tree://summary` dodają pole `anchored: true` przy
+  zakotwiczonych węzłach.
+
+## [0.11.0] — 2026-05-31
+
+### Added — tag `:assumed:` (sieć bezpieczeństwa przed tempem agenta)
+
+- **`assumed` jako tag, ortogonalny do stanu TODO** (n31). Węzeł może być
+  jednocześnie `PROPOSAL :assumed:`, `WORK-UNIT :assumed:` itd. Znaczenie:
+  „agent poszedł dalej tym tropem — potwierdź zanim wbije głębiej",
+  w odróżnieniu od `PROPOSAL` (= „twoja decyzja, czekam").
+- Świadomie **nie** nowy `TodoState` — założenie jest niezależne od fazy
+  pracy węzła, więc tag (reuse `addTag`/`removeTag`, parser, round-trip)
+  zamiast słowa kluczowego w cyklu.
+- **Render:** wpis `assumed` w `tagAttrMap` (bursztyn, ANSI `11`) — user
+  wyłapuje niepotwierdzone założenia wzrokiem.
+- **Konwencja w instrukcjach MCP:** agent oznacza własne założenia
+  `addTag(id, "assumed")` zamiast cichej kontynuacji, zdejmuje po
+  potwierdzeniu usera. Protokół zsynchronizowany w `CLAUDE.md`.
+
+## [0.10.0] — 2026-05-31
+
+### Added — tryb follow + flash dotkniętych węzłów
+
+- **MCP nie kradnie selekcji domyślnie.** Dotąd każda mutacja MCP przenosiła
+  zaznaczenie w TUI na zmieniony węzeł. Teraz to zachowanie jest zarezerwowane
+  dla nowego **trybu follow** (domyślnie OFF, toggle klawiszem `f`):
+  - **follow ON** — mutacje MCP przenoszą selekcję na `affectedId` (agent
+    prowadzi wzrok usera, dawne zachowanie).
+  - **follow OFF** — selekcja nieruszana; dotknięty węzeł **migocze** ~800 ms
+    (tło ANSI `130`). User steruje selekcją sam.
+- **Odczyty MCP też migoczą.** `find` (wszystkie trafienia) oraz
+  `tree://item/<id>` (czytany węzeł) podświetlają węzły flashem — **zawsze**,
+  niezależnie od trybu follow, i **nigdy** nie przenoszą selekcji
+  (nie da się zaznaczyć N trafień, a odczyt nie powinien kraść focusu).
+  `tree://summary` celowo bez flasha.
+- **Wskaźnik `⟳follow`** w StatusBarze (tryb NORMAL) gdy follow ON.
+- Mechanizm flash w `TreePanel` (`flashItems`): mapa id→timeout, `invalidate()`
+  w `setTimeout` (wzorzec z `StatusBar.showMessage`), kolor tła w
+  `buildRowSegments`. Nowa ścieżka `MCPServer.setOnItemsTouched` dla odczytów,
+  odrębna od `onTreeChanged` (bez `applyTree`/`pushUndo`).
+
+### Uwaga migracyjna
+
+- Przy follow OFF pole `selection` w odpowiedzi MCP odzwierciedla **faktyczną
+  pozycję usera**, nie świeżo edytowany węzeł. Agent ma `affectedId`/`diff`
+  do identyfikacji zmiany — workflow polegające na "po add selection = nowy
+  węzeł" powinny włączyć follow (`f`) albo czytać `affectedId`.
+
+## [0.9.3] — 2026-05-31
+
+### Changed — TUI
+
+- **Poziomy margines 1 kolumny w TreePanel i DetailsPanel** (`padding: [0, 1]`).
+  Po usunięciu ramek (0.9.2) treść przylegała do krawędzi — padding odsuwa ją
+  o 1 kolumnę z lewej i prawej, bez przywracania ramki.
+
+## [0.9.2] — 2026-05-31
+
+### Changed — TUI (kompaktowy layout)
+
+- **Usunięte ramki TreePanel i DetailsPanel** (`border: false` w `main.mts`) —
+  więcej miejsca na treść, znikają labele "Tree"/"Details". Separacja paneli
+  realizowana teraz przez **lekko jaśniejsze tło DetailsPanel** (ANSI `236`
+  vs tło ekranu `234`), rejestrowane jako styl i podpięte przez
+  `WindowProperties.background`. Konsekwencja: brak kolorowego wskaźnika focusu
+  z ramki — tryb edycji nadal sygnalizowany w StatusBarze i przez inverse.
+- **Przeorganizowany render DetailsPanel — zwartszy:**
+  - Górna linia to **nagłówek**: numer zadania (ID, szary) + tytuł (bold) z
+    hanging indent. Zastępuje etykietę `Title:` oraz sekcję `Properties: ID:`
+    (ID jest teraz w nagłówku). Pod nagłówkiem cienki separator `─`.
+  - **Status + tagi** w jednej zwartej linii (TODO bold, tagi `#tag` dim).
+  - **Znane properties** (`FROZEN`, `ROCK-SOLID`, `ANCHOR`, `AGENT-INBOX`)
+    renderowane nad notatkami jako **kolorowa ikona NerdFonts + label**
+    (mapa `KNOWN_PROPS`). Nieznane properties (poza `ID`) — kompaktowo
+    `key: value` (dim). Usunięta sekcja `Properties:` i linia `Children:`.
+
+## [0.9.1] — 2026-05-31
+
+### Changed — TUI
+
+- **Kolumna ID przeniesiona na lewą krawędź drzewa (toggle `I`).** Dotąd ID
+  renderowane było jako `[nXX]` z atrybutem `dim`, wcięte razem z drzewem
+  (po ikonie expand i znaczniku TODO). Teraz przy `showIds=ON` ID trafia do
+  **stałej kolumny przy lewej krawędzi panelu**, niezależnie od głębokości:
+  - bez nawiasów kwadratowych (`n42` zamiast `[n42]`),
+  - kolor **szary** (ANSI 8) zamiast samego `dim`,
+  - lewo-justowane, wyrównane do szerokości najdłuższego widocznego ID + 1,
+  - część drzewiasta (wcięcie/expand/todo/tytuł/tagi) zaczyna się po kolumnie ID,
+    dzięki czemu tytuły są wyrównane mimo różnych głębokości.
+  Szerokość kolumny liczona z całej spłaszczonej listy (nie tylko viewportu),
+  więc nie skacze przy scrollu. Kotwica menu kontekstowego przesunięta o szerokość
+  kolumny. `I` OFF — wiersz bez zmian. `buildRowSegments` dostał parametr
+  `idColumnWidth`.
+
 ## [0.9.0] — 2026-05-25
 
 ### Added — TUI

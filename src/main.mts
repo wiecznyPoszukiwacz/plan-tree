@@ -79,6 +79,10 @@ class ApplicationState {
   // poprzedni snapshot przed zastosowaniem. Limit 100 stanów.
   private undoStack: Tree[] = [];
   private static readonly UNDO_LIMIT = 100;
+  // Tryb follow: gdy ON, mutacje MCP przenoszą selekcję na dotknięty węzeł
+  // (agent prowadzi wzrok usera). Gdy OFF (domyślnie), dotknięte węzły tylko
+  // migoczą — user steruje selekcją sam, MCP jej nie kradnie.
+  private followMode = false;
 
   /**
    * Konstruktor — buduje layout, rejestruje fokusowalne kontrolki, podpina MCP.
@@ -127,8 +131,8 @@ class ApplicationState {
       {
         pos: Pos.flex(0),
         size: this.treeSize,
-        border: { top: true, right: true, bottom: true, left: true, style: 'single' },
-        label: 'Tree',
+        border: false,
+        padding: [0, 1],
       },
       {
         rootItem: tree.root as Item,
@@ -157,17 +161,33 @@ class ApplicationState {
                 : TreeOperations.setProperty(this.tree, item.getId(), 'FROZEN', 't'),
             );
           },
+          onToggleAnchor: (item) => {
+            const isAnchored = item.getProperties().get('ANCHOR') === 't';
+            this.applyMutation(
+              isAnchored
+                ? TreeOperations.unanchor(this.tree, item.getId())
+                : TreeOperations.anchor(this.tree, item.getId()),
+            );
+            this.statusBar.showMessage(
+              isAnchored ? `Unanchored ${item.getId()}` : `Anchored ${item.getId()}`,
+              1200,
+            );
+          },
         },
       },
     );
     this.splitRow.addChild(this.treePanel);
 
+    // Brak ramek (kompaktowy layout) — separacja TreePanel/DetailsPanel przez
+    // lekko jaśniejsze tło panelu szczegółów (236) względem tła ekranu (234).
+    const detailsBackground = this.screen.registerStyle({ background: 236 });
     this.detailsPanel = new DetailsPanel(
       {
         pos: Pos.flex(1),
         size: this.detailsSize,
-        border: { top: true, right: true, bottom: true, left: true, style: 'single' },
-        label: 'Details',
+        border: false,
+        background: detailsBackground,
+        padding: [0, 1],
       },
       {
         onSaveTitle: (item, title) => this.applyMutation(TreeOperations.rename(this.tree, item.getId(), title)),
@@ -236,6 +256,18 @@ class ApplicationState {
       this.undo();
       return true;
     });
+    // 'f' — toggle trybu follow (MCP przenosi selekcję vs tylko miga).
+    // W trybie edycji w DetailsPanel literę 'f' obsługuje panel.
+    this.windowManager.bindKey('f', (ctx) => {
+      if (ctx.focusedControl === this.detailsPanel && this.detailsPanel.getEditMode() === 'edit') {
+        return false;
+      }
+      this.followMode = !this.followMode;
+      this.statusBar.setFollowMode(this.followMode);
+      this.statusBar.showMessage(`Follow mode: ${this.followMode ? 'ON' : 'OFF'}`, 1200);
+      this.screen.render();
+      return true;
+    });
     // Toggle debug panel. Backtick może być dead-keyem w niektórych
     // układach klawiatury (PL, DE) — dodatkowo `~` i `?` jako fallback.
     const toggleDebug = (): boolean => {
@@ -266,6 +298,12 @@ class ApplicationState {
     );
     this.mcpServer.setOnLastCallChanged((ts: Date, tool: string) => {
       this.statusBar.setMcpLastCall(ts, tool);
+      this.screen.render();
+    });
+    // Odczyty MCP (find, tree://item/<id>) — flash bez ruszania selekcji,
+    // niezależnie od trybu follow.
+    this.mcpServer.setOnItemsTouched((ids: string[]) => {
+      this.treePanel.flashItems(ids);
       this.screen.render();
     });
   }
@@ -315,8 +353,14 @@ class ApplicationState {
     this.pushUndo();
     this.applyTree(newTree);
     if (affectedId) {
-      this.treePanel.selectById(affectedId);
-      this.detailsPanel.setItem(this.treePanel.getSelectedItem() ?? null);
+      if (this.followMode) {
+        // Follow ON: przenieś selekcję na zmieniony węzeł — agent prowadzi wzrok.
+        this.treePanel.selectById(affectedId);
+        this.detailsPanel.setItem(this.treePanel.getSelectedItem() ?? null);
+      } else {
+        // Follow OFF: nie ruszaj selekcji, tylko mignij węzłem.
+        this.treePanel.flashItems([affectedId]);
+      }
       this.screen.render();
     }
   }

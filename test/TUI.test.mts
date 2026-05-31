@@ -196,6 +196,31 @@ test('TreePanel - render produces output with titles', () => {
   assert.ok(dump.includes('Child Item'), `expected 'Child Item' in:\n${dump}`);
 });
 
+test('TreePanel - flashItems does not move selection', () => {
+  const root = new Item('root', 'Root');
+  root.addChild(new Item('child1', 'Child 1'));
+  root.addChild(new Item('child2', 'Child 2'));
+
+  let selectionChanges = 0;
+  const panel = makeTree(root, () => { selectionChanges++; });
+
+  assert.equal(panel.getSelectedIndex(), 0);
+  panel.flashItems(['child2']);
+  // Flash to czysto wizualny sygnał — selekcja i callback nie ruszone.
+  assert.equal(panel.getSelectedIndex(), 0);
+  assert.equal(panel.getSelectedItem()?.getId(), 'root');
+  assert.equal(selectionChanges, 0);
+  // Render z migoczącym węzłem nie wywala się.
+  assert.doesNotThrow(() => dumpWindowText(panel));
+});
+
+test('TreePanel - flashItems with empty list is a no-op', () => {
+  const root = new Item('root', 'Root');
+  const panel = makeTree(root);
+  assert.doesNotThrow(() => panel.flashItems([]));
+  assert.equal(panel.getSelectedIndex(), 0);
+});
+
 test('TreePanel - onSelectionChanged fires on navigation', () => {
   const root = new Item('root', 'Root');
   root.addChild(new Item('c', 'C'));
@@ -707,6 +732,28 @@ test('StatusBar - frozen suffix hidden in EDIT mode', () => {
   bar.setMode('edit');
   const dump = dumpWindowText(bar);
   assert.ok(!dump.includes('frozen'), `did not expect 'frozen' in edit mode:\n${dump}`);
+});
+
+test('StatusBar - setFollowMode renders "⟳follow" suffix in NORMAL mode', () => {
+  const bar = makeBar();
+  bar.setFollowMode(true);
+  const dump = dumpWindowText(bar);
+  assert.ok(dump.includes('⟳follow'), `expected '⟳follow' in:\n${dump}`);
+});
+
+test('StatusBar - follow suffix hidden when OFF', () => {
+  const bar = makeBar();
+  bar.setFollowMode(false);
+  const dump = dumpWindowText(bar);
+  assert.ok(!dump.includes('⟳follow'), `did not expect '⟳follow' in:\n${dump}`);
+});
+
+test('StatusBar - follow suffix hidden in EDIT mode', () => {
+  const bar = makeBar();
+  bar.setFollowMode(true);
+  bar.setMode('edit');
+  const dump = dumpWindowText(bar);
+  assert.ok(!dump.includes('⟳follow'), `did not expect '⟳follow' in edit mode:\n${dump}`);
 });
 
 test('TreePanel - pinning applies only at root level, not nested', () => {

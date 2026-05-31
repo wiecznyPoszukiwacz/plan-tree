@@ -31,6 +31,7 @@ const tagAttrMap: Record<string, CellAttributes> = {
   question:  { foreground: 5 },  // magenta
   decision:  { foreground: 2 },  // green
   risk:      { foreground: 1 },  // red
+  assumed:   { foreground: 11 }, // amber — agent assumption, confirm before going deeper
 };
 
 /**
@@ -56,6 +57,12 @@ export interface TreePanelActions {
    * czy ustawić czy usunąć property na podstawie aktualnego stanu węzła.
    */
   onToggleFreeze?: (item: Item) => void;
+  /**
+   * Toggle właściwości :ANCHOR: t (kotwica user/agent). Implementacja w
+   * ApplicationState decyduje set/remove na podstawie aktualnego stanu węzła.
+   * Odkotwiczenie jest wyłącznie po stronie usera (TUI) — agent nie ma tej akcji.
+   */
+  onToggleAnchor?: (item: Item) => void;
 }
 
 export interface TreePanelOptions {
@@ -98,6 +105,14 @@ export default class TreePanel extends Window implements Focusable {
   private actions: TreePanelActions = {};
   /** Bufor potwierdzenia delete: pierwszy 'd' arms, drugi 'd' wykonuje. */
   private deleteArmed = false;
+  /**
+   * Migoczące węzły dotknięte przez MCP (odczyt/mutacja w trybie follow OFF):
+   * item-id → handle timeout'u czyszczącego. Render koloruje te wiersze,
+   * timeout je usuwa i invaliduje — wzorzec z StatusBar.showMessage.
+   */
+  private flashing: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  /** Czas trwania pojedynczego błysku w ms. */
+  private static readonly FLASH_MS = 800;
   /** Czy ukrywać korzeń w renderze (patrz TreePanelOptions.hideRoot). */
   private readonly hideRoot: boolean;
   /** Kontekstowe menu otwierane spacją na zaznaczonym węźle. */
@@ -313,6 +328,9 @@ export default class TreePanel extends Window implements Focusable {
       case 'l': case '\x1b[C': this.unfoldCurrent(); break;
       case 'H': this.toggleHideDone(); break;
       case 'F': this.toggleHideFrozen(); break;
+      case 'A':
+        if (current && this.actions.onToggleAnchor) this.actions.onToggleAnchor(current);
+        break;
       case 'I': this.toggleShowIds(); break;
       case 't':
         if (current && this.actions.onCycleTodo) this.actions.onCycleTodo(current);
@@ -396,6 +414,15 @@ export default class TreePanel extends Window implements Focusable {
         },
       });
     }
+    if (this.actions.onToggleAnchor) {
+      const isAnchored = item.getProperties().get('ANCHOR') === 't';
+      items.push({
+        label: isAnchored ? 'Odkotwicz' : 'Zakotwicz',
+        action: () => {
+          if (this.actions.onToggleAnchor) this.actions.onToggleAnchor(item);
+        },
+      });
+    }
     if (this.actions.onDelete) {
       items.push({
         label: 'Usuń',
@@ -430,6 +457,28 @@ export default class TreePanel extends Window implements Focusable {
       this.invalidate();
       this.emitSelectionChanged();
     }
+  }
+
+  /**
+   * Oznacza węzły jako migoczące (dotknięte przez MCP w trybie follow OFF):
+   * koloruje je na FLASH_MS, po czym czyści i przerysowuje. Nie rusza selekcji
+   * ani scrolla — błysk poza ekranem jest celowo niewidoczny. Powtórny flash
+   * tego samego id restartuje timer.
+   *
+   * @param itemIds - ID węzłów do podświetlenia (puste — no-op)
+   */
+  public flashItems(itemIds: readonly string[]): void {
+    if (itemIds.length === 0) return;
+    for (const id of itemIds) {
+      const existing = this.flashing.get(id);
+      if (existing) clearTimeout(existing);
+      const handle = setTimeout(() => {
+        this.flashing.delete(id);
+        this.invalidate();
+      }, TreePanel.FLASH_MS);
+      this.flashing.set(id, handle);
+    }
+    this.invalidate();
   }
 
   /**
@@ -540,10 +589,17 @@ export default class TreePanel extends Window implements Focusable {
     this.ensureSelectionVisible();
     const visibleEnd = Math.min(this.scrollOffset + innerHeight, this.flattenedNodes.length);
 
+    // Stała kolumna ID po lewej krawędzi (gdy showIds): szerokość = najdłuższe
+    // widoczne ID + 1 spacja separator. Liczona z całej spłaszczonej listy
+    // (nie tylko viewportu), żeby kolumna nie skakała przy scrollu.
+    const idColumnWidth = this.showIds
+      ? this.flattenedNodes.reduce((m, n) => Math.max(m, n.item.getId().length), 0) + 1
+      : 0;
+
     for (let i = this.scrollOffset; i < visibleEnd; i++) {
       const node = this.flattenedNodes[i];
       const isSelected = i === this.selectedIndex;
-      const segments = this.buildRowSegments(node, innerWidth, isSelected);
+      const segments = this.buildRowSegments(node, innerWidth, isSelected, idColumnWidth);
       this.writeText(segments, { x: 0, y: i - this.scrollOffset, style: 0 });
     }
 
@@ -553,7 +609,7 @@ export default class TreePanel extends Window implements Focusable {
       // Kotwica popupu: wcięcie zaznaczonego wiersza + przesunięcie za
       // ikonę expandu i znacznik TODO, tuż poniżej wiersza. Render menu
       // sam clamp'uje do inner-area, więc nie wyleci poza panel.
-      const anchorX = selectedNode ? selectedNode.depth * 2 + 4 : 0;
+      const anchorX = selectedNode ? idColumnWidth + selectedNode.depth * 2 + 4 : 0;
       const anchorY = rowY + 1;
       this.menu.render(this, anchorX, anchorY);
     }
@@ -567,12 +623,14 @@ export default class TreePanel extends Window implements Focusable {
    * @param node - Węzeł do narysowania
    * @param innerWidth - Szerokość obszaru wewnętrznego (po wcięciu border+padding)
    * @param isSelected - Czy ten wiersz jest aktualnie wybrany
+   * @param idColumnWidth - Szerokość stałej kolumny ID po lewej (0 gdy showIds OFF)
    * @returns Lista segmentów do przekazania do writeText
    */
   private buildRowSegments(
     node: TreeNodeUI,
     innerWidth: number,
     isSelected: boolean,
+    idColumnWidth: number,
   ): WriteTextSegment[] {
     const indent = '  '.repeat(node.depth);
     const expandIcon = node.item.getChildren().length > 0
@@ -584,7 +642,9 @@ export default class TreePanel extends Window implements Focusable {
     const priorityMark = priority === 'A' ? '! ' : priority === 'B' ? '· ' : '  ';
     const frozen = node.item.getProperties().get('FROZEN') === 't';
     const frozenMark = frozen ? '❄ ' : '';
-    const prefix = `${indent}${expandIcon}${todoChar} ${priorityMark}${frozenMark}`;
+    const anchored = node.item.getProperties().get('ANCHOR') === 't';
+    const anchorMark = anchored ? '📌 ' : '';
+    const prefix = `${indent}${expandIcon}${todoChar} ${anchorMark}${priorityMark}${frozenMark}`;
 
     const tags = node.item.getTags();
     const tagsText = tags.length > 0
@@ -592,36 +652,50 @@ export default class TreePanel extends Window implements Focusable {
       : '';
     const tagsWidth = this.getTextWidth(tagsText);
 
-    const idText = this.showIds ? `[${node.item.getId()}] ` : '';
-    const idWidth = this.getTextWidth(idText);
+    // Stała kolumna ID po lewej krawędzi (bez wcięcia), lewo-justowana,
+    // wyrównana do idColumnWidth. Pusta gdy showIds OFF.
+    const idCol = idColumnWidth > 0
+      ? node.item.getId().padEnd(idColumnWidth)
+      : '';
+    const idColWidth = this.getTextWidth(idCol);
 
     const prefixWidth = this.getTextWidth(prefix);
-    const availableForTitle = Math.max(0, innerWidth - prefixWidth - idWidth - tagsWidth);
+    const availableForTitle = Math.max(0, innerWidth - idColWidth - prefixWidth - tagsWidth);
     const title = node.item.getTitle();
     const titleWidth = this.getTextWidth(title);
     const truncatedTitle = titleWidth > availableForTitle
       ? this.truncateToWidth(title, Math.max(0, availableForTitle - 1)) + '…'
       : title;
 
-    const usedWidth = prefixWidth + idWidth + this.getTextWidth(truncatedTitle) + tagsWidth;
+    const usedWidth = idColWidth + prefixWidth + this.getTextWidth(truncatedTitle) + tagsWidth;
     const padWidth = Math.max(0, innerWidth - usedWidth);
 
+    // Flash: węzeł dotknięty przez MCP (follow OFF) — tło wyróżniające na cały
+    // wiersz, podporządkowane selekcji (inverse ma pierwszeństwo).
+    const isFlashing = !isSelected && this.flashing.has(node.item.getId());
+    const flashBg: CellAttributes = isFlashing ? { background: 130 } : {};
+
     // Kolory tytułu wg: priorytetu (A=czerwony, B=pomarańczowy), QUESTION (cyjan),
-    // DONE (dim), FROZEN (dim). Selekcja zawsze przez inverse.
-    let titleAttrs: CellAttributes = {};
+    // DONE (dim), FROZEN (dim). Selekcja zawsze przez inverse, flash przez tło.
+    let titleAttrs: CellAttributes = { ...flashBg };
     if (node.item.getTodo() === 'QUESTION') titleAttrs.foreground = 6; // cyan
     if (priority === 'A') titleAttrs.foreground = 9;   // bright red
     else if (priority === 'B') titleAttrs.foreground = 11; // bright yellow / amber
     if (node.item.getTodo() === 'DONE' || frozen) titleAttrs.dim = true;
+    if (anchored) titleAttrs.bold = true;
     if (isSelected) titleAttrs.inverse = true;
-    const baseAttrs: CellAttributes | undefined = isSelected ? { inverse: true } : undefined;
+    const baseAttrs: CellAttributes | undefined = isSelected
+      ? { inverse: true }
+      : (isFlashing ? { ...flashBg } : undefined);
     const segments: WriteTextSegment[] = [];
 
-    segments.push({ text: prefix, ...(baseAttrs ? { attrs: baseAttrs } : {}) });
-    if (idText) {
-      const idAttrs: CellAttributes = { dim: true, ...(isSelected ? { inverse: true } : {}) };
-      segments.push({ text: idText, attrs: idAttrs });
+    // Kolumna ID najpierw — przyklejona do lewej krawędzi, szara (ANSI 8).
+    // Przy zaznaczeniu dziedziczy inverse, żeby highlight wiersza był ciągły.
+    if (idCol) {
+      const idAttrs: CellAttributes = { foreground: 8, ...flashBg, ...(isSelected ? { inverse: true } : {}) };
+      segments.push({ text: idCol, attrs: idAttrs });
     }
+    segments.push({ text: prefix, ...(baseAttrs ? { attrs: baseAttrs } : {}) });
     segments.push({ text: truncatedTitle, attrs: titleAttrs });
 
     if (tags.length > 0) {
@@ -630,6 +704,7 @@ export default class TreePanel extends Window implements Focusable {
         const tag = tags[i];
         const tagAttrs: CellAttributes = {
           ...(tagAttrMap[tag] ?? {}),
+          ...flashBg,
           ...(isSelected ? { inverse: true } : {}),
         };
         segments.push({ text: tag, attrs: tagAttrs });

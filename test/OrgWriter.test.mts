@@ -407,3 +407,25 @@ test('OrgReader+OrgWriter - priority cookie round-trip', async () => {
     cleanupTestFile(f2);
   }
 });
+
+test('OrgWriter - :ANCHOR: t survives write→read round-trip (contract persists across autosave)', () => {
+  const root = new Item('root', 'Plan Root');
+  const item1 = new Item('item-1', 'Locked Task', 'TODO', [], '', new Map([['ID', 'item-1'], ['ANCHOR', 't']]));
+  root.addChild(item1);
+  const tree = { root, itemsById: new Map([['root', root], ['item-1', item1]]) };
+
+  const filePath = join(testDir, 'anchor_roundtrip.org');
+  try {
+    const writer = new OrgWriter();
+    writer.write(tree, filePath);
+
+    const content = readFileSync(filePath, 'utf-8');
+    assert(content.includes(':ANCHOR: t'), 'ANCHOR property serialized into the drawer');
+
+    const tree2 = new OrgReader().read(filePath);
+    const reloaded = tree2.root.getChildren().find((c) => c.getId() === 'item-1')!;
+    assert.strictEqual(reloaded.getProperties().get('ANCHOR'), 't', 'ANCHOR survives reload — guard will see it');
+  } finally {
+    cleanupTestFile(filePath);
+  }
+});

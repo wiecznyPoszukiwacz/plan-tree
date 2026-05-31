@@ -441,3 +441,98 @@ test('TreeOperations.find - includeFrozen=false cascades: hides FROZEN node AND 
   assert.ok(visible.find((m) => m.id === 'item1'), 'item1 visible with includeFrozen');
   assert.ok(visible.find((m) => m.id === 'item1_1'), 'item1_1 visible with includeFrozen');
 });
+
+// ============ ANCHOR (n40) ============
+
+test('TreeOperations.anchor/unanchor - round-trip sets and clears :ANCHOR: t', () => {
+  let tree = createTestTree();
+  const r1 = TreeOperations.anchor(tree, 'item1');
+  assert.ok(r1.success, 'anchor should succeed');
+  tree = r1.newTree!;
+  assert.strictEqual(tree.itemsById.get('item1')!.getProperties().get('ANCHOR'), 't', 'item1 has :ANCHOR: t');
+
+  const r2 = TreeOperations.unanchor(tree, 'item1');
+  assert.ok(r2.success, 'unanchor should succeed');
+  tree = r2.newTree!;
+  assert.strictEqual(tree.itemsById.get('item1')!.getProperties().has('ANCHOR'), false, 'item1 no longer anchored');
+});
+
+test('TreeOperations - anchored node blocks content mutations (self)', () => {
+  const tree = TreeOperations.anchor(createTestTree(), 'item1').newTree!;
+  for (const r of [
+    TreeOperations.rename(tree, 'item1', 'X'),
+    TreeOperations.setNotes(tree, 'item1', 'X'),
+    TreeOperations.setTodo(tree, 'item1', 'DONE'),
+    TreeOperations.addTag(tree, 'item1', 'foo'),
+    TreeOperations.setPriority(tree, 'item1', 'A'),
+    TreeOperations.setProperty(tree, 'item1', 'FOO', 'bar'),
+  ]) {
+    assert.strictEqual(r.success, false, 'mutation on anchored node rejected');
+    assert.ok(r.message.includes('anchored'), 'message mentions anchored');
+  }
+});
+
+test('TreeOperations - mutation of a child inside an anchored subtree is blocked (cascade down)', () => {
+  // item1 anchored → item1_1 (its child) is locked too.
+  const tree = TreeOperations.anchor(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.rename(tree, 'item1_1', 'X');
+  assert.strictEqual(r.success, false, 'child of anchored node cannot be renamed');
+  assert.ok(r.message.includes('item1'), 'blocked by the anchored ancestor item1');
+});
+
+test('TreeOperations - deleting a non-anchored parent with an anchored child is blocked (the żelazna kotwica case)', () => {
+  // Anchor the CHILD; deleting the non-anchored PARENT would destroy it.
+  const tree = TreeOperations.anchor(createTestTree(), 'item1_1').newTree!;
+  const r = TreeOperations.deleteItem(tree, 'item1');
+  assert.strictEqual(r.success, false, 'delete of parent with anchored descendant rejected');
+  assert.ok(r.message.includes('item1_1'), 'blocked by anchored descendant item1_1');
+});
+
+test('TreeOperations - extract/absorb/move of a node with an anchored descendant is blocked', () => {
+  const tree = TreeOperations.anchor(createTestTree(), 'item1_1').newTree!;
+  assert.strictEqual(TreeOperations.extract(tree, 'item1').success, false, 'extract blocked');
+  assert.strictEqual(TreeOperations.absorb(tree, 'item1').success, false, 'absorb blocked');
+  assert.strictEqual(TreeOperations.move(tree, 'item1', 'item2').success, false, 'move blocked');
+});
+
+test('TreeOperations - moving a node INTO an anchored subtree is blocked', () => {
+  const tree = TreeOperations.anchor(createTestTree(), 'item2').newTree!;
+  const r = TreeOperations.move(tree, 'item1', 'item2');
+  assert.strictEqual(r.success, false, 'cannot move into anchored target');
+  assert.ok(r.message.includes('item2'), 'blocked by anchored target item2');
+});
+
+test('TreeOperations - add child under anchored node is blocked', () => {
+  const tree = TreeOperations.anchor(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.add(tree, 'item1', 'New child');
+  assert.strictEqual(r.success, false, 'cannot add under anchored node');
+});
+
+test('TreeOperations - non-anchored siblings remain mutable while one is anchored', () => {
+  const tree = TreeOperations.anchor(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.rename(tree, 'item2', 'Renamed');
+  assert.ok(r.success, 'sibling item2 stays mutable');
+});
+
+test('TreeOperations - renaming a non-anchored ancestor of an anchored node is allowed (content edit, up-only)', () => {
+  // item1_1 anchored. Renaming item1 (its parent) does not touch item1_1, so allowed.
+  const tree = TreeOperations.anchor(createTestTree(), 'item1_1').newTree!;
+  const r = TreeOperations.rename(tree, 'item1', 'Parent renamed');
+  assert.ok(r.success, 'content edit of ancestor allowed — does not destroy/relocate anchored descendant');
+});
+
+test('TreeOperations - ANCHOR key is protected from setProperty/removeProperty', () => {
+  const tree = createTestTree();
+  const rs = TreeOperations.setProperty(tree, 'item1', 'ANCHOR', 't');
+  assert.strictEqual(rs.success, false, 'setProperty ANCHOR rejected');
+  const anchored = TreeOperations.anchor(tree, 'item1').newTree!;
+  const rr = TreeOperations.removeProperty(anchored, 'item1', 'ANCHOR');
+  assert.strictEqual(rr.success, false, 'removeProperty ANCHOR rejected (user-only via TUI)');
+});
+
+test('TreeOperations.find - flags anchored items with anchored:true', () => {
+  const tree = TreeOperations.anchor(createTestTree(), 'item1').newTree!;
+  const matches = JSON.parse(TreeOperations.find(tree, {}).diff!) as Array<{ id: string; anchored?: true }>;
+  assert.strictEqual(matches.find((m) => m.id === 'item1')!.anchored, true, 'item1 flagged anchored');
+  assert.strictEqual(matches.find((m) => m.id === 'item2')!.anchored, undefined, 'item2 not flagged');
+});

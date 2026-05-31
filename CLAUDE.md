@@ -50,9 +50,12 @@ niski albo żaden.
   selection mówi jednoznacznie.
 - Twoje pytania → `QUESTION` w planie (przez `add` z notami zawierającymi
   rekomendację). Nie zostawiaj pytań tylko w czacie.
-- Twoje założenia ("zakładam X bo Y") → `ASSUMED` (gdy stan będzie
-  zaimplementowany — n31) lub PROPOSAL z notatką. Nigdy nie kontynuuj
-  cicho po założeniu, które użytkownik może chcieć cofnąć.
+- Twoje założenia ("zakładam X bo Y") → tag `:assumed:` (przez
+  `addTag`). Jest ortogonalny do stanu TODO — węzeł może być
+  `PROPOSAL :assumed:`, `WORK-UNIT :assumed:` itd. Znaczy "poszedłem
+  dalej tym tropem, potwierdź zanim wbiję głębiej". Renderuje się
+  bursztynowo. Zdejmij tag (`removeTag`) gdy user potwierdzi. Nigdy nie
+  kontynuuj cicho po założeniu, które użytkownik może chcieć cofnąć.
 - ANCHOR — nigdy nie modyfikuj. Jeśli musisz, eskaluj do użytkownika
   jawnie ("n42 jest anchorem — czy mogę go zmienić, czy projektuję
   alternatywę?"). Nie próbuj unanchor "po cichu".

@@ -18,6 +18,18 @@ import type { Item } from '../types.mjs';
 type EditMode = 'view' | 'edit';
 
 /**
+ * Znane properties renderowane nad notatkami jako kolorowa ikona NerdFonts
+ * + krótki label. Klucze to nazwy property z drawer org-mode. Ikony to glify
+ * z zakresu NerdFonts (terminal ma zainstalowane NF). `fg` to ANSI 0–255.
+ */
+const KNOWN_PROPS: Record<string, { icon: string; label: string; fg: number }> = {
+  FROZEN:        { icon: '\u{f2dc}', label: 'frozen',      fg: 6 },  // snowflake, cyan
+  'ROCK-SOLID':  { icon: '\u{f132}', label: 'rock-solid',  fg: 4 },  // shield, blue
+  ANCHOR:        { icon: '\u{f13d}', label: 'anchor',      fg: 3 },  // anchor, yellow
+  'AGENT-INBOX': { icon: '\u{f01c}', label: 'agent-inbox', fg: 5 },  // inbox, magenta
+};
+
+/**
  * Stan wewnętrzny panelu szczegółów.
  */
 interface DetailsPanelState {
@@ -273,51 +285,72 @@ export default class DetailsPanel extends Window implements Focusable {
       return;
     }
 
-    // Pomocnik: pisze etykietę + zawiniętą wartość. Pierwsza linia ma prefix
-    // (np. "Title: "), kolejne są wcięte o jego długość, żeby kolumny się
-    // wyrównywały. Zwraca nową wartość `y` po wypisaniu.
-    const writeWrapped = (
-      prefix: string,
-      value: string,
-      attrs?: CellAttributes,
-    ): number => {
-      if (y >= inner.height) return y;
-      const indent = ' '.repeat(prefix.length);
-      const wrapped = DetailsPanel.wrapText(value, Math.max(1, inner.width - prefix.length));
-      for (let i = 0; i < wrapped.length; i++) {
-        if (y >= inner.height) break;
-        const linePrefix = i === 0 ? prefix : indent;
-        const segments: WriteTextSegment[] = [
-          { text: linePrefix },
-          { text: wrapped[i], ...(attrs ? { attrs } : {}) },
-        ];
-        this.writeText(segments, { x: 0, y });
-        y += 1;
-      }
-      return y;
-    };
-
-    // Tytuł
-    const titleAttrs: CellAttributes | undefined =
-      this.state.editMode === 'edit' && this.state.editingField === 'title'
-        ? { inverse: true }
-        : undefined;
-    const titleText = this.state.editMode === 'edit' && this.state.editingField === 'title'
-      ? this.state.editValue
-      : item.getTitle();
-    writeWrapped('Title: ', titleText, titleAttrs);
-    y += 1;
-
-    if (y >= inner.height) { super.render(); return; }
-    writeWrapped('Status: ', item.getTodo());
-    y += 1;
-
-    const tags = item.getTags();
-    if (tags.length > 0 && y < inner.height) {
-      writeWrapped('Tags: ', tags.join(', '));
+    // ── Nagłówek: ID (szary) + tytuł (bold, akcent) z hanging indent ──
+    // Zastępuje etykietę "Title:" oraz "Properties: ID:" — numer zadania
+    // siedzi obok tytułu, więc obie etykiety są zbędne.
+    const editingTitle = this.state.editMode === 'edit' && this.state.editingField === 'title';
+    const titleText = editingTitle ? this.state.editValue : item.getTitle();
+    const idPrefix = item.getId() + '  ';
+    const titleWidth = Math.max(1, inner.width - idPrefix.length);
+    const titleLines = DetailsPanel.wrapText(titleText, titleWidth);
+    const titleAttrs: CellAttributes = editingTitle ? { inverse: true } : { bold: true };
+    for (let i = 0; i < titleLines.length; i++) {
+      if (y >= inner.height) break;
+      const lead = i === 0
+        ? ({ text: idPrefix, attrs: { foreground: 8 } } as WriteTextSegment)
+        : ({ text: ' '.repeat(idPrefix.length) } as WriteTextSegment);
+      this.writeText([lead, { text: titleLines[i], attrs: titleAttrs }], { x: 0, y });
       y += 1;
     }
 
+    // Separator graficzny pod nagłówkiem.
+    if (y < inner.height) {
+      this.writeText([{ text: '─'.repeat(inner.width), attrs: { dim: true } }], { x: 0, y });
+      y += 1;
+    }
+
+    // ── Status + tagi w jednej zwartej linii ──
+    if (y < inner.height) {
+      const tags = item.getTags();
+      const segments: WriteTextSegment[] = [{ text: item.getTodo(), attrs: { bold: true } }];
+      if (tags.length > 0) {
+        segments.push({ text: '   ' + tags.map((t) => '#' + t).join(' '), attrs: { dim: true } });
+      }
+      this.writeText(segments, { x: 0, y });
+      y += 1;
+    }
+
+    // ── Properties ──
+    // Znane → kolorowa ikona NerdFonts + label w jednej linii. ID pomijane
+    // (jest w nagłówku). Nieznane → kompaktowo "key: value".
+    const props = item.getProperties();
+    const knownSegments: WriteTextSegment[] = [];
+    const unknown: Array<[string, string]> = [];
+    for (const [key, value] of props.entries()) {
+      if (key === 'ID') continue;
+      const known = KNOWN_PROPS[key];
+      if (known) {
+        if (knownSegments.length > 0) knownSegments.push({ text: '   ' });
+        knownSegments.push({ text: known.icon + ' ' + known.label, attrs: { foreground: known.fg } });
+      } else {
+        unknown.push([key, value]);
+      }
+    }
+    if (knownSegments.length > 0 && y < inner.height) {
+      this.writeText(knownSegments, { x: 0, y });
+      y += 1;
+    }
+    for (const [key, value] of unknown) {
+      if (y >= inner.height) break;
+      const wrapped = DetailsPanel.wrapText(`${key}: ${value}`, Math.max(1, inner.width));
+      for (const line of wrapped) {
+        if (y >= inner.height) break;
+        this.writeText([{ text: line, attrs: { dim: true } }], { x: 0, y });
+        y += 1;
+      }
+    }
+
+    // ── Notatki ──
     const inEditNotes = this.state.editMode === 'edit' && this.state.editingField === 'notes';
     const notesText = inEditNotes ? this.state.editValue : item.getNotes();
     if ((notesText || inEditNotes) && y < inner.height) {
@@ -333,29 +366,6 @@ export default class DetailsPanel extends Window implements Focusable {
         ], { x: 0, y });
         y += 1;
       }
-      y += 1;
-    }
-
-    const props = item.getProperties();
-    if (props.size > 0 && y < inner.height) {
-      this.writeText('Properties:', { x: 0, y });
-      y += 1;
-      for (const [key, value] of props.entries()) {
-        if (y >= inner.height) break;
-        const wrapped = DetailsPanel.wrapText(`${key}: ${value}`, Math.max(1, inner.width - 2));
-        for (const line of wrapped) {
-          if (y >= inner.height) break;
-          this.writeText(`  ${line}`, { x: 0, y });
-          y += 1;
-        }
-      }
-      y += 1;
-    }
-
-    const children = item.getChildren();
-    if (children.length > 0 && y < inner.height) {
-      this.writeText(`Children: ${children.length}`, { x: 0, y });
-      y += 1;
     }
 
     if (y < inner.height - 1) {
