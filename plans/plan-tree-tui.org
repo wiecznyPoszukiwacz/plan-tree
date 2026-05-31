@@ -87,14 +87,90 @@ Każdy nierozstrzygnięty QUESTION blokuje N innych zadań. TUI obok QUESTION po
 Pomaga priorytetyzować: wybierasz QUESTION który odblokuje najwięcej.
 Wymaga: definicja "blokuje" — domyślnie wszystkie dzieci poddrzewa (semantyka org-mode hierarchy). Opcjonalnie: explicit blocker via :BLOCKS: nN,nM property na QUESTION. Render w TreePanel: dopisek liczby po prefiksie tytułu.
 Powiązane z #4 (dashboard): tam też pokazywać licznik, sortować po nim.
-** Panic mode / freeze-depth — "nie rozwijaj tu dalej"
+** DONE Panic mode / freeze-depth — "nie rozwijaj tu dalej"
 :PROPERTIES:
 :ID: n36
 :END:
-Klawisz w TUI: na fokusowanym węźle ustaw tag :freeze-depth: (lub property). Mówi mi explicite "stop, ten poziom szczegółowości wystarczy".
+Klawisz w TUI: na fokusowanym węźle ustaw property :FREEZE-DEPTH: t. Mówi mi explicite "stop, ten poziom szczegółowości wystarczy".
 Cel: gdy widzę dobry kąt i chcę rozsiekać na 10 podzadań, ty mówisz "nie teraz, mam tego dość".
-Wymaga: tag/property, MCP tool freezeDepth(itemId), instrukcja w SERVER_INSTRUCTIONS żebym czytał i nie rozwijał takich węzłów dalej (split/add child pod nimi → ostrzeżenie lub odmowa).
 Różni się od FROZEN (cały task na pauzie) — tu task pracuje, ale szczegóły nie są mile widziane.
+---
+ZREALIZOWANE (0.13.0):
+- Property :FREEZE-DEPTH: t (wzór ANCHOR, osobny guard).
+- Guard w TreeOperations: add dziecka w poddrzewie depth-frozen → odmowa; split potomka → odmowa; split samego depth-frozen węzła dozwolony (siostra poza poddrzewem).
+- MCP tools freezeDepth/unfreezeDepth + akapit STRUCTURAL BRAKES w SERVER_INSTRUCTIONS.
+- TUI: Shift+D toggle + menu kontekstowe; render ⊟ w drzewie, ikona depth-frozen w DetailsPanel.
+- Testy w TreeOperations.test.mts.
+*** QUESTION Split samego depth-frozen węzła — dozwolić czy blokować?
+:PROPERTIES:
+:ID: n103
+:END:
+Wątpliwość 2026-05-31. Implementacja (0.13.0) przyjęła unilateralnie: split SAMEGO depth-frozen węzła jest DOZWOLONY (rozszczepienie tworzy siostrę poza poddrzewem węzła, więc nie deepuje detalu pod nim). Blokowany jest tylko split potomków.
+Argument za (przyjęty): freeze-depth znaczy „nie rozwijaj PONIŻEJ"; split węzła rośnie wszerz na poziomie rodzica, nie w głąb.
+Argument przeciw: user mówiąc „mam dość tego węzła" może oczekiwać że nie tknę też jego tytułu.
+Rekomendacja: zostawić jak jest (dozwolone), ale czeka na potwierdzenie usera.
+*** PROPOSAL Wystawić freeze-depth w tree://summary i find (jak anchored:true dla kotwic)
+:PROPERTIES:
+:ID: n104
+:END:
+Odkryte 2026-05-31. Dziś agent dowiaduje się że węzeł jest depth-frozen dopiero uderzając w ścianę (odmowa add/split). Kotwice są wystawiane jako anchored:true w tree://summary i find — symetrycznie warto dodać depthFrozen:true (albo freezeDepth:true), żeby agent projektował WOKÓŁ zamrożonych poziomów, nie po fakcie. Tani fix konsystencji.
+*** PROPOSAL Wizualizacja freeze-depth przez pokolorowanie kolumn wcięcia
+:PROPERTIES:
+:ID: n105
+:END:
+Pomysł usera 2026-05-31. Dziś depth-freeze sygnalizowany tylko prefiksem ⊟ na samym węźle — strefa zablokowana (całe poddrzewo, w którym nie wolno rozwijać) nie jest widoczna jako region.
+Cel: strefa freeze jako pionowy pas koloru wzdłuż kolumn wcięcia poddrzewa — „tu już nie schodzimy głębiej" widoczne na pierwszy rzut oka, nie pojedynczy znaczek.
+Powiązane: [[n104]] (wystawienie freeze-depth w summary/find) — wizualny odpowiednik dla TUI.
+Dekompozycja w dzieciach: zakres pasa, wariant renderu, kolor, precedencja tła, miejsce implementacji.
+**** QUESTION Zakres pasa — które kolumny wcięcia kolorować
+:PROPERTIES:
+:ID: n106
+:END:
+Drzewo wcina 2 spacje/poziom (TreePanel.renderNode: indent = '  '.repeat(depth)). Pas powinien obejmować kolumny od głębokości węzła-freeze w dół, przez całe poddrzewo.
+Do decyzji:
+- Lewa krawędź pasa: kolumna wcięcia odpowiadająca głębokości węzła-freeze (depth_freeze * 2) — czyli wcięcie, pod którym rośnie poddrzewo.
+- Prawa krawędź: do końca wcięcia najgłębszego potomka, czy stała szerokość (np. tylko 1-2 kolumny markera)?
+Rekomendacja: pas = kolumny wcięcia [depth_freeze .. depth_node] dla każdego wiersza w poddrzewie — wtedy głębsze wiersze mają szerszy pas, co naturalnie obrazuje „im głębiej tym bardziej zablokowane".
+**** QUESTION Wariant renderu — pełne tło kolumn vs tylko znaki guide (│)
+:PROPERTIES:
+:ID: n107
+:END:
+Dwie ścieżki wizualne:
+- (A) Pełne tło: pokolorowane tło (background ANSI) na kolumnach wcięcia poddrzewa. Mocny, czytelny pas, ale „ciężki" i koliduje z innymi tłami wiersza ([[precedencja]]).
+- (B) Znaki guide: zamiast spacji wcięcia rysować lekki znak (│ / ┊) w kolorze freeze. Lżejsze, mniej kolizji z tłem, ale subtelniejsze.
+Rekomendacja: (B) jako MVP (mniej kolizji, ładne), (A) opcjonalnie później. Spójne z lekkim duchem TUI.
+**** PROPOSAL Kolor pasa — spójny z markerem ⊟ i ikoną depth-frozen
+:PROPERTIES:
+:ID: n108
+:END:
+Marker ⊟ w drzewie i ikona depth-frozen w DetailsPanel są zielone (fg 2). Pas powinien używać tej samej rodziny koloru, żeby język wizualny był spójny (zielony = „granica głębokości").
+Do wyboru: dla wariantu tła — przyciemniony zielony background (np. ANSI 22/28); dla wariantu guide — fg zielony (2) na znakach │.
+Rekomendacja: trzymać jeden token koloru „freeze" w jednym miejscu (stała), używany przez marker, ikonę i pas — łatwa rekalibracja.
+**** QUESTION Precedencja z innymi tłami wiersza (selekcja/flash/dim)
+:PROPERTIES:
+:ID: n109
+:END:
+Wiersz ma już warstwy tła/atrybutów: selekcja (inverse), flash MCP (background 130), dim (DONE/FROZEN), priorytet (fg). Pas freeze nie może maskować selekcji ani flasha.
+Proponowana precedencja (od najwyższej): selekcja inverse > flash MCP > pas freeze > dim. Pas rysowany tylko na kolumnach wcięcia (przed tytułem), więc w praktyce rzadko nachodzi na tytuł — kolizja głównie gdy wiersz jest zaznaczony (inverse obejmuje całość). Wtedy pas ustępuje.
+Decyzja do potwierdzenia + miejsce egzekucji: TreePanel.renderNode buduje segmenty (idCol, prefix, title…) — pas wpięty w atrybuty segmentu prefiksu wcięcia.
+**** QUESTION Czy kolorować też wiersz samego węzła-freeze, czy tylko poddrzewo
+:PROPERTIES:
+:ID: n110
+:END:
+Semantyka: freeze-depth znaczy „nie rozwijaj PONIŻEJ". Pas obrazuje zablokowaną strefę = poddrzewo.
+Pytanie: wiersz samego węzła-freeze ma już ⊟ — czy dodatkowo zaczynać pas już na jego wierszu (jako „nagłówek strefy"), czy pas dotyczy wyłącznie wierszy potomków?
+Powiązane z [[n103]] (split samego węzła dozwolony — węzeł sam nie jest zamrożony, tylko jego głębokość). Spójnie: pas zaczyna się POD węzłem (na potomkach), a sam węzeł nosi tylko marker ⊟.
+Rekomendacja: pas tylko na poddrzewie; węzeł-freeze = marker ⊟ + ewentualnie subtelny akcent startu pasa.
+**** PROPOSAL Implementacja: pas w TreePanel.renderNode + propagacja głębokości freeze
+:PROPERTIES:
+:ID: n111
+:END:
+Miejsce: TreePanel.renderNode (buduje segmenty wiersza: indent/expandIcon/todoChar/marki/title). Pas = atrybuty na segmencie wcięcia.
+Potrzebne: każdy renderowany węzeł musi wiedzieć, czy leży w poddrzewie depth-frozen i na jakiej głębokości jest najbliższy przodek-freeze (żeby wyznaczyć lewą krawędź pasa). Opcje:
+- (A) Przy budowie listy widocznych węzłów (flatten drzewa do TreeNodeUI) policzyć i wpiąć pole np. freezeDepthAncestor: number|null.
+- (B) Liczyć ad hoc w renderNode przez wejście w górę po rodzicach — prościej, ale O(depth) per wiersz.
+Rekomendacja: (A) — policzyć raz przy flatten (jest już depth/isExpanded w TreeNodeUI), render czyta gotowe pole. Render rozbija indent na segmenty: [0..freezeCol) normalnie, [freezeCol..depthCol) z atrybutem pasa.
+To jest węzeł roboczy — po rozstrzygnięciu [[n106]][[n107]][[n108]][[n109]] staje się WORK-UNIT.
 ** Markery efortu — 5min / 1h / 1dzień
 :PROPERTIES:
 :ID: n37
@@ -269,51 +345,28 @@ Implementacja:
 - SERVER_INSTRUCTIONS zawiera akapit: "Always check `threshold` in responses. Ideas below threshold MUST go to agent-inbox via `addToAgentInbox(...)`. Do not call `add(...)` for them."
 Rezultat: nawet po reset kontekstu / kompresji / nowej sesji widzę threshold przy pierwszym MCP call. Nie muszę pamiętać.
 Domyślny threshold przy nowym pliku: "medium". User może obniżyć ("low" = wszystko OK do struktury, agent-inbox prawie pusty) lub podnieść ("critical" = tylko fatal idą do struktury, reszta do inbox).
-*** QUESTION Blokada add — głębokość N, zakres, bypass
+*** DONE Blokada add — głębokość N, zakres, bypass
 :PROPERTIES:
 :ID: n75
 :END:
-Trzy decyzje:
-A) Co dokładnie blokujemy:
-- (i) Tylko add z parentId="root" (samo top-level).
-- (ii) Top-level + N poziomów (user-konfigurowalne, np. 2 = root i jego dzieci).
-- (iii) Cała ścieżka od roota do węzła z `:OPEN-FOR-AGENT: t` property — agent może dodawać tylko poniżej wyraźnie otwartych miejsc.
-Rekomendacja: (ii) z konfigurowalnym N (default 1 = tylko root, czyli minimum). User może podnieść do 2-3 dla planów gdzie chce dyscypliny też na pod-tematach. Property :ADD-LOCK-DEPTH: N na rooсie.
-B) Co znaczy blokada:
-- Hard: MCP zwraca error "depth-locked, use agent-inbox or request user-grant". Agent nic nie wymusza.
-- Soft: ostrzeżenie w response, ale add przechodzi. Agent ma decydować.
-Rekomendacja: Hard. Cały sens to strukturalne uniemożliwienie, nie apel do dobrej woli.
-C) Bypass — kiedy agent może legalnie:
-- User-grant: tool `grantAddPermission(parentId, ttlSeconds=60)` — user wykonuje, MCP zapamiętuje na N sekund że agent ma jednorazowy(/krótkoterminowy) grant na ten parent.
-- Explicit user prompt w czacie "dodaj jako top-level X" — agent woła grant + add. User widzi w response confirmation.
-- Agent NIGDY nie grantuje sam sobie.
-Rezultat: ścieżka pomysł→struktura zawsze przechodzi przez user (grant lub triage z agent-inbox).
-**** PROPOSAL Trzeci tryb bypass: synchroniczny modal potwierdzenia w TUI
+ROZSTRZYGNIĘCIE (2026-05-31) + ZREALIZOWANE (0.13.0):
+A) Co blokujemy → konfigurowalne N, property :ADD-LOCK-DEPTH: N na root, default brak (opt-in, OFF). add gdy głębokość rodzica < N → odmowa. N=1 = tylko top-level.
+B) Hard vs soft → HARD. MCP zwraca actionable error (kieruje do agent-inboxa / usera).
+C) Bypass (grant/TTL) → ODŁOŻONE do etapu 2. Na razie brak agent-bypassu: pomysł idzie do agent-inboxa albo czeka na usera.
+- MCP tool setAddLockDepth(N) (N=0 wyłącza) + akapit STRUCTURAL BRAKES w SERVER_INSTRUCTIONS.
+- Testy w TreeOperations.test.mts.
+OGRANICZENIE (znane, odłożone): blokada jest session-only — OrgWriter pomija properties roota, więc :ADD-LOCK-DEPTH: nie przetrwa save/reload. Persystencja (leading properties drawer w writerze+readerze) jako osobne zadanie.
+**** PROPOSAL Persystencja :ADD-LOCK-DEPTH: — leading properties drawer w OrgWriter/OrgReader
 :PROPERTIES:
-:ID: n79
+:ID: n101
 :END:
-Dodatkowa opcja do hard block + grant (nie zamiast). Gdy agent woła `add` na zablokowanym poziomie, plan-tree TUI wyświetla modal:
-```
-Agent chce dodać: "Tytuł..."
-pod: nXX (level 2)
-[A]ccept  [T]riage (agent-inbox)  [R]eject
-```
-User wciska klawisz, MCP zwraca:
-- A → add przechodzi normalnie, agent dostaje success.
-- T → add przekierowane do agent-inbox z notatką "user redirected from level 2", agent dostaje success z innym parentId i instrukcją żeby zaktualizować swój kontekst.
-- R → MCP zwraca error z actionable hint ("user rejected. Rationale (jeśli user dopisał): ...").
-Pytanie o timeout — patrz notes użytkownika:
-- MCP musi mieć własny timeout krótszy niż timeout tool calla agenta. Default proponowane: 30s w MCP, agent typowo ma ~60s — daje bufor.
-- Po timeout MCP zwraca default akcję — opcje:
-  (i) Hard block ("brak reakcji = nie wolno", agent dostaje error i idzie do agent-inbox sam).
-  (ii) Auto-triage do agent-inbox (best-effort, user może promować później).
-Rekomendacja: (ii). Powód: agent NIE traci pomysłu (jest w agent-inbox), user nic nie traci (zobaczy go potem), nikt nie był blokowany dłużej niż 30s. Hard block po timeoutie karze obie strony za to że user był zajęty.
-Tryb modal jest opt-in per parentId/depth:
-- Property `:CONFIRM-ADD: t` na konkretnym rodzicu — agent add pod tym rodzicem zawsze pyta.
-- Globalnie: `:ADD-CONFIRM-DEPTH: N` na rooсie — analogicznie do `:ADD-LOCK-DEPTH:`.
-Kombinacja z hard lock: jeśli oba ustawione, lock wygrywa (modal nie pokazany, error od razu). Jeśli tylko confirm — modal się pokazuje. Jeśli tylko lock — bez modalu.
-Edge case: agent dodaje batch (np. rozpakowuje QUESTION na 5 children). Modal per child = 5 pytań = nuke productivity. Mitigation: gdy agent woła `add` w krótkim oknie (np. <2s od poprzedniego), modal oferuje dodatkowo `[S]kip rest (auto-accept this batch)` — user raz akceptuje całą falę.
-Powiązane: [[n67]] (wpis w inbox z wyborem A/B/C) używa identycznego mechanizmu modal+klawisz — warto zunifikować komponent UI.
+Odkryte 2026-05-31 podczas implementacji n75 (0.13.0). OrgWriter serializuje tylko dzieci roota (root = czysto logiczny kontener), więc properties roota — w tym :ADD-LOCK-DEPTH: — NIE są zapisywane do pliku. Po autosave/reload blokada znika (jest session-only, w pamięci serwera).
+Decyzja usera: na razie session-only, persystencję odłożyć.
+Rozwiązanie do etapu 2: leading properties drawer (zeroth-section) — :PROPERTIES:...:END: na początku pliku przed pierwszym headline. Wymaga:
+- OrgWriter: jeśli root ma properties (poza ID), wypisz drawer na górze pliku.
+- OrgReader: jeśli plik zaczyna się drawerem przed pierwszym headline → wczytaj do properties roota.
+- Test round-trip.
+Rekomendacja: zrobić razem z domknięciem move/absorb/merge (ten sam feature „twardy hamulec na serio").
 *** PROPOSAL Format wpisu w agent-inbox
 :PROPERTIES:
 :ID: n76
@@ -354,6 +407,17 @@ Rekomendacja: (A) + ograniczone (B) i (C):
 - (C) tylko za explicit "wyczyść agent-inbox z nieaktualnych" — agent flaguje (np. setTodo DROPPED z notatką dlaczego), user dopiero delete'uje.
 Powód: cały sens agent-inbox to żeby user widział co mi się rzuciło. Cichy auto-prune niwelowałby wartość audytową.
 Powiązane: [[n34]] (dashboard QUESTION) — analogiczny dashboard "co mi się rzuciło ostatnio" dla agent-inbox.
+*** QUESTION Hamulce (freeze-depth + add-lock) omijane przez move/absorb/merge :risk:
+:PROPERTIES:
+:ID: n102
+:END:
+Odkryte 2026-05-31 (review po implementacji 0.13.0). Oba hamulce guardują TYLKO add/split. Dziury:
+- move(X, parent-w-poddrzewie-freeze) → powiększa depth-frozen poddrzewo, guard nie reaguje.
+- move(X, root) przy :ADD-LOCK-DEPTH: 1 → tworzy top-level, checkAddLockDepth działa tylko w add → ominięte.
+- absorb/merge analogicznie mogą zmieniać strukturę pod hamulcem.
+Kontrast z ANCHOR: kotwica pokrywa move/extract/absorb/merge/reorder przez findAnchorAtOrBelow + sprawdzenie target-chain. Te dwa nowe hamulce nie.
+Konsekwencja: „twardy hamulec na scope creep" jest dziś miękki na operacjach przenoszących. Agent (lub user) może obejść.
+Do etapu 2: dodać guardy freeze-depth/add-lock w move/absorb/merge analogicznie do ANCHOR. Rekomendacja: spiąć z persystencją w jeden pakiet „hardening hamulców".
 ** PROPOSAL Inspiracje z konkurencji — co warto przejąć
 :PROPERTIES:
 :ID: n80
@@ -514,25 +578,21 @@ Plus: tree://summary i find dostaną pole `anchored: true` dla zakotwiczonych �
 :ID: n46
 :END:
 DECYZJA (2026-05-31): wybrano (B) — anchor + całe poddrzewo chronione (żelazna kotwica).
-
 Implementacja: guard w TreeOperations sprawdza w dwóch kierunkach:
 - edycje treści (rename/setTodo/setNotes/tagi/priorytet/setProperty) → blokada gdy węzeł LUB przodek zakotwiczony (up),
 - operacje niszczące/przenoszące (delete/move/extract/absorb/merge/reorder/add-child) → blokada gdy węzeł, przodek LUB potomek zakotwiczony (up+down).
 Sprawdzanie w dół jest kluczowe: bez niego nieanchorowany rodzic mógłby usunąć/zrelokować zakotwiczone dziecko, co łamałoby sens żelaznej kotwicy.
-
 Odrzucone: (A) elastyczność niewystarczająca dla kontraktu; (C) pływający anchor nie chroni struktury; (D) dwa rodzaje — nadmiar złożoności na start (możliwe future enhancement).
 ** DONE Czy agent może unanchor na explicit user request, czy tylko user?
 :PROPERTIES:
 :ID: n47
 :END:
 DECYZJA (2026-05-31): wybrano (A) — tylko user może odkotwiczyć, przez TUI (Shift+A). Agent fizycznie nie ma tool unanchor.
-
 Implementacja:
 - Tool MCP `anchor` ZOSTAJE (agent kotwiczy na wyraźną prośbę usera) — kotwiczenie tylko zwiększa ochronę, więc nie ma luki w kontrakcie. Decyzja (A) usuwała wyłącznie unanchor, nie anchor.
 - Brak tool `unanchor`.
 - Klucz ANCHOR chroniony w setProperty/removeProperty (jak ID) — agent nie obejdzie kontraktu przez te toole.
 - W kolizji agent eskaluje do usera ("n42 jest anchorem — mogę zmienić czy projektuję alternatywę?"), nigdy nie odkotwicza po cichu (zapisane w SERVER_INSTRUCTIONS).
-
 Odrzucone: (B) podważa sens; (C) brak egzekucji kodem; (D) dialog consent — odłożone jako future enhancement, gdyby eskalacje okazały się zbyt częste.
 * Inbox — skrótowe notatki ode mnie, agent rozwija i przenosi
 :PROPERTIES:

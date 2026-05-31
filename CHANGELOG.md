@@ -3,6 +3,54 @@
 All notable changes to plan-tree TUI are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0] — 2026-05-31
+
+### Added — hamulce na scope creep: freeze-depth (n36) + add-lock-depth (n75)
+
+Dwa niezależne mechanizmy strukturalne blokujące rozrost drzewa, oba
+wzorem guardu ANCHOR (osobny predykat per feature, wspólny tylko styl
+czytelnego komunikatu odrzucenia).
+
+- **Freeze-depth (n36) — `:FREEZE-DEPTH: t`**. „Ten poziom szczegółowości
+  wystarczy, nie rozwijaj poniżej". Guard w `TreeOperations` odrzuca:
+  - `add` dziecka gdziekolwiek w poddrzewie depth-frozen węzła (kaskada
+    w dół przez `findFreezeDepthAtOrAbove`),
+  - `split` dowolnego *potomka* (rozsiekanie deepuje granularność poniżej).
+    Split samego depth-frozen węzła jest dozwolony — tworzy siostrę poza
+    jego poddrzewem.
+  - Różni się od FROZEN (cały task na pauzie, ukryty): depth-frozen węzeł
+    zostaje widoczny i aktywny, blokowany jest tylko wzrost struktury w dół.
+- **MCP tools `freezeDepth` / `unfreezeDepth`** + akapit STRUCTURAL BRAKES
+  w SERVER_INSTRUCTIONS.
+- **TUI**: klawisz `Shift+D` (toggle depth-freeze) + wpis w menu
+  kontekstowym; render prefiksem `⊟` w drzewie i ikoną `depth-frozen`
+  (minus-square, zielony) w DetailsPanel.
+
+- **Add-lock-depth (n75) — `:ADD-LOCK-DEPTH: N` na root (opt-in)**. Twardy
+  hamulec na scope creep blisko korzenia: `add`, którego rodzic leży na
+  głębokości < N, jest odrzucany. N=1 blokuje tylko top-level (rodzic=root),
+  N=2 także dzieci roota itd. Brak property = brak blokady (domyślnie OFF).
+  - **Hard-block bez agent-bypassu** (etap 1): zablokowany pomysł idzie do
+    agent-inboxa albo czeka na usera. `grantAddPermission`/TTL/klawisze
+    TUI G/U — odłożone do etapu 2.
+  - **MCP tool `setAddLockDepth(N)`** (N=0 wyłącza) + akapit w
+    SERVER_INSTRUCTIONS.
+  - **Ograniczenie (znane)**: blokada jest *session-only* — żyje w pamięci
+    serwera, nie jest jeszcze persystowana do pliku .org (OrgWriter pomija
+    properties roota), więc resetuje się przy restarcie TUI / reloadzie.
+    Persystencja (leading properties drawer w writerze+readerze) odłożona.
+
+### Known gaps (etap 2)
+
+- Oba hamulce guardują **tylko `add`/`split`**. Operacje przenoszące/scalające
+  (`move`, `absorb`, `merge`) mogą je obejść: `move` węzła do poddrzewa
+  depth-frozen powiększa je, a `move` do roota tworzy top-level mimo
+  add-lock. ANCHOR pokrywa te ścieżki (`findAnchorAtOrBelow` + target-chain);
+  freeze-depth i add-lock — jeszcze nie. Domknięcie odłożone.
+- Render freeze-depth nie jest jeszcze wystawiony w `tree://summary`/`find`
+  (jak `anchored:true` dla kotwic) — agent dowiaduje się o blokadzie dopiero
+  uderzając w ścianę.
+
 ## [0.12.0] — 2026-05-31
 
 ### Added — ANCHOR: punkty nietykalne przez agenta (n40)

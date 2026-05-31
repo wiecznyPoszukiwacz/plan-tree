@@ -536,3 +536,104 @@ test('TreeOperations.find - flags anchored items with anchored:true', () => {
   assert.strictEqual(matches.find((m) => m.id === 'item1')!.anchored, true, 'item1 flagged anchored');
   assert.strictEqual(matches.find((m) => m.id === 'item2')!.anchored, undefined, 'item2 not flagged');
 });
+
+// ============ Freeze-depth (N36) ============
+
+test('TreeOperations.freezeDepth/unfreezeDepth - round-trip sets and clears :FREEZE-DEPTH: t', () => {
+  let tree = createTestTree();
+  const r1 = TreeOperations.freezeDepth(tree, 'item1');
+  assert.ok(r1.success, 'freezeDepth should succeed');
+  tree = r1.newTree!;
+  assert.strictEqual(tree.itemsById.get('item1')!.getProperties().get('FREEZE-DEPTH'), 't', 'item1 has :FREEZE-DEPTH: t');
+
+  const r2 = TreeOperations.unfreezeDepth(tree, 'item1');
+  assert.ok(r2.success, 'unfreezeDepth should succeed');
+  tree = r2.newTree!;
+  assert.strictEqual(tree.itemsById.get('item1')!.getProperties().has('FREEZE-DEPTH'), false, 'item1 no longer depth-frozen');
+});
+
+test('TreeOperations - add a child under a depth-frozen node is blocked', () => {
+  const tree = TreeOperations.freezeDepth(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.add(tree, 'item1', 'New detail');
+  assert.strictEqual(r.success, false, 'add under depth-frozen node rejected');
+  assert.ok(r.message.includes('depth-frozen'), 'message mentions depth-frozen');
+  assert.ok(r.message.includes('item1'), 'blocked by item1');
+});
+
+test('TreeOperations - add a child deeper inside a depth-frozen subtree is blocked (cascade)', () => {
+  // item1 depth-frozen → adding under its child item1_1 is also blocked.
+  const tree = TreeOperations.freezeDepth(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.add(tree, 'item1_1', 'Deeper detail');
+  assert.strictEqual(r.success, false, 'add under descendant of depth-frozen node rejected');
+  assert.ok(r.message.includes('item1'), 'blocked by depth-frozen ancestor item1');
+});
+
+test('TreeOperations - splitting a descendant of a depth-frozen node is blocked', () => {
+  // item1 depth-frozen → splitting its child item1_1 (deepens granularity below) is blocked.
+  const tree = TreeOperations.freezeDepth(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.split(tree, 'item1_1', 3);
+  assert.strictEqual(r.success, false, 'split of descendant rejected');
+  assert.ok(r.message.includes('depth-frozen'), 'message mentions depth-frozen');
+});
+
+test('TreeOperations - splitting the depth-frozen node itself is allowed (sibling outside subtree)', () => {
+  const tree = TreeOperations.freezeDepth(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.split(tree, 'item1', 3);
+  assert.ok(r.success, 'splitting the frozen node itself produces a sibling, not depth — allowed');
+});
+
+test('TreeOperations - depth-freeze does not block add under unrelated nodes', () => {
+  const tree = TreeOperations.freezeDepth(createTestTree(), 'item1').newTree!;
+  const r = TreeOperations.add(tree, 'item2', 'Fine here');
+  assert.ok(r.success, 'add under sibling subtree unaffected by depth-freeze on item1');
+});
+
+// ============ Add-lock-depth (N75) ============
+
+test('TreeOperations.setAddLockDepth - sets and clears :ADD-LOCK-DEPTH: on root', () => {
+  let tree = createTestTree();
+  const r1 = TreeOperations.setAddLockDepth(tree, 1);
+  assert.ok(r1.success, 'setAddLockDepth(1) should succeed');
+  tree = r1.newTree!;
+  assert.strictEqual(tree.root.getProperties().get('ADD-LOCK-DEPTH'), '1', 'root has :ADD-LOCK-DEPTH: 1');
+
+  const r0 = TreeOperations.setAddLockDepth(tree, 0);
+  assert.ok(r0.success, 'setAddLockDepth(0) should succeed (disable)');
+  tree = r0.newTree!;
+  assert.strictEqual(tree.root.getProperties().has('ADD-LOCK-DEPTH'), false, 'lock removed when set to 0');
+});
+
+test('TreeOperations.setAddLockDepth - rejects invalid depth', () => {
+  const tree = createTestTree();
+  assert.strictEqual(TreeOperations.setAddLockDepth(tree, -1).success, false, 'negative rejected');
+  assert.strictEqual(TreeOperations.setAddLockDepth(tree, 1.5).success, false, 'non-integer rejected');
+});
+
+test('TreeOperations - add-lock-depth=1 blocks top-level add (parent=root)', () => {
+  const tree = TreeOperations.setAddLockDepth(createTestTree(), 1).newTree!;
+  const r = TreeOperations.add(tree, 'root', 'New top-level');
+  assert.strictEqual(r.success, false, 'top-level add rejected under add-lock-depth 1');
+  assert.ok(r.message.includes('add-lock-depth'), 'message mentions add-lock-depth');
+});
+
+test('TreeOperations - add-lock-depth=1 still allows add under non-root parents', () => {
+  const tree = TreeOperations.setAddLockDepth(createTestTree(), 1).newTree!;
+  const r = TreeOperations.add(tree, 'item1', 'Child of item1');
+  assert.ok(r.success, 'add under depth-1 parent allowed when lock depth is 1');
+});
+
+test('TreeOperations - add-lock-depth=2 also blocks add under root children', () => {
+  const tree = TreeOperations.setAddLockDepth(createTestTree(), 2).newTree!;
+  const rRoot = TreeOperations.add(tree, 'root', 'X');
+  assert.strictEqual(rRoot.success, false, 'top-level blocked');
+  const rChild = TreeOperations.add(tree, 'item1', 'X'); // item1 at depth 1 < 2
+  assert.strictEqual(rChild.success, false, 'add under depth-1 parent blocked when lock depth is 2');
+  const rDeep = TreeOperations.add(tree, 'item1_1', 'X'); // item1_1 at depth 2, not < 2
+  assert.ok(rDeep.success, 'add under depth-2 parent allowed');
+});
+
+test('TreeOperations - no add-lock-depth property means no restriction (opt-in)', () => {
+  const tree = createTestTree();
+  const r = TreeOperations.add(tree, 'root', 'New top-level');
+  assert.ok(r.success, 'top-level add allowed when lock not configured');
+});

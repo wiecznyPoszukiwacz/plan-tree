@@ -57,6 +57,18 @@ export default class MCPServer {
     '("n42 is anchored — may I change it, or should I design an alternative?"); never attempt to unanchor',
     'silently. Anchored items carry `anchored: true` in tree://summary and find results so you spot them at once.',
     '',
+    'STRUCTURAL BRAKES (scope-creep guards): two opt-in mechanisms reject structural growth, both with',
+    'actionable messages. (1) DEPTH-FREEZE — an Item with :FREEZE-DEPTH: t means "this level of detail is',
+    'enough; do not expand below here". add() of a child anywhere in that subtree, and split() of any',
+    'descendant, are REJECTED (splitting the frozen node itself is fine — that is a sibling outside it).',
+    'Set/lift via freezeDepth/unfreezeDepth. Distinct from freeze (which hides a paused branch); a depth-frozen',
+    'node stays visible and active. (2) ADD-LOCK-DEPTH — the root may carry :ADD-LOCK-DEPTH: N (absent ⇒ off).',
+    'add() whose parent sits at depth < N is REJECTED — N=1 gates top-level (parent=root). This is a hard',
+    'block with no agent bypass: when you hit it, DO NOT route around it — drop the idea into the agent-inbox',
+    '(the :AGENT-INBOX: t node) or surface it to the user and let them add it / lift the lock. Set via',
+    'setAddLockDepth(N) on the user\'s request (N=0 disables). Both brakes exist to keep the plan growing at',
+    'the user\'s pace, not yours — treat a rejection as a signal to escalate, never as an obstacle to bypass.',
+    '',
     'ASSUMED TAG: the tag `assumed` is orthogonal to the TODO keyword (a node can be PROPOSAL+assumed,',
     'WORK-UNIT+assumed, etc.). It is YOUR (the agent\'s) safety flag, meaning "I went ahead down this path —',
     'confirm before I dig deeper". Whenever you proceed on an assumption the user might want to reverse,',
@@ -411,6 +423,21 @@ export default class MCPServer {
         inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
       },
       {
+        name: 'freezeDepth',
+        description: 'Mark an Item as depth-frozen — sets property :FREEZE-DEPTH: t. Signals "this level of detail is enough; do NOT expand below here". REJECTS add (a child anywhere in the subtree) and split (of any descendant), with a clear message. Distinct from freeze (which pauses+hides the whole branch): a depth-frozen item stays visible and active — only further structural growth beneath it is blocked. Use on the user\'s request ("nie rozwijaj tu dalej"). Counterpart unfreezeDepth lifts it.',
+        inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
+      },
+      {
+        name: 'unfreezeDepth',
+        description: 'Lift a depth-freeze — removes property :FREEZE-DEPTH:. Re-allows add/split beneath the Item.',
+        inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
+      },
+      {
+        name: 'setAddLockDepth',
+        description: 'Set the plan-wide add-lock-depth — property :ADD-LOCK-DEPTH: N on the root. Opt-in hard brake on scope creep near the root: add() whose parent sits at depth < N is REJECTED. N=1 locks only top-level (parent=root). N=0 disables (removes the property). Use on the user\'s request when they want top-level structure gated. There is currently no agent bypass — blocked ideas go to the agent-inbox or wait for the user to add them. NOTE: the lock is session-only — it lives in memory and is NOT yet persisted to the .org file, so it resets on TUI restart / file reload.',
+        inputSchema: { type: 'object', properties: { depth: { type: 'number', description: 'Lock depth ≥0. 0 disables, 1 locks top-level, 2 also locks root\'s children, etc.' } }, required: ['depth'] },
+      },
+      {
         name: 'setPriority',
         description: 'Set or clear the org-mode priority cookie [#A]/[#B]/[#C]. Pass null/empty to clear. [#A]=highest, [#C]=lowest. No priority is the default.',
         inputSchema: {
@@ -664,6 +691,15 @@ export default class MCPServer {
           break;
         case 'anchor':
           result = TreeOperations.anchor(this.tree, args.itemId as string);
+          break;
+        case 'freezeDepth':
+          result = TreeOperations.freezeDepth(this.tree, args.itemId as string);
+          break;
+        case 'unfreezeDepth':
+          result = TreeOperations.unfreezeDepth(this.tree, args.itemId as string);
+          break;
+        case 'setAddLockDepth':
+          result = TreeOperations.setAddLockDepth(this.tree, args.depth as number);
           break;
         case 'setPriority':
           result = TreeOperations.setPriority(this.tree, args.itemId as string, args.priority as string);

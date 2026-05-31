@@ -24,6 +24,7 @@ type EditMode = 'view' | 'edit';
  */
 const KNOWN_PROPS: Record<string, { icon: string; label: string; fg: number }> = {
   FROZEN:        { icon: '\u{f2dc}', label: 'frozen',      fg: 6 },  // snowflake, cyan
+  'FREEZE-DEPTH': { icon: '\u{f146}', label: 'depth-frozen', fg: 2 }, // minus-square, green
   'ROCK-SOLID':  { icon: '\u{f132}', label: 'rock-solid',  fg: 4 },  // shield, blue
   ANCHOR:        { icon: '\u{f13d}', label: 'anchor',      fg: 3 },  // anchor, yellow
   'AGENT-INBOX': { icon: '\u{f01c}', label: 'agent-inbox', fg: 5 },  // inbox, magenta

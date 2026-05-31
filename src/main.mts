@@ -173,6 +173,18 @@ class ApplicationState {
               1200,
             );
           },
+          onToggleFreezeDepth: (item) => {
+            const isDepthFrozen = item.getProperties().get('FREEZE-DEPTH') === 't';
+            this.applyMutation(
+              isDepthFrozen
+                ? TreeOperations.unfreezeDepth(this.tree, item.getId())
+                : TreeOperations.freezeDepth(this.tree, item.getId()),
+            );
+            this.statusBar.showMessage(
+              isDepthFrozen ? `Depth-unfrozen ${item.getId()}` : `Depth-frozen ${item.getId()} — no expansion below`,
+              1200,
+            );
+          },
         },
       },
     );

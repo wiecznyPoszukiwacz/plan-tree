@@ -63,6 +63,12 @@ export interface TreePanelActions {
    * Odkotwiczenie jest wyłącznie po stronie usera (TUI) — agent nie ma tej akcji.
    */
   onToggleAnchor?: (item: Item) => void;
+  /**
+   * Toggle właściwości :FREEZE-DEPTH: t (depth-freeze, "nie rozwijaj tu dalej").
+   * Implementacja w ApplicationState decyduje set/remove na podstawie aktualnego
+   * stanu węzła. Różni się od onToggleFreeze (FROZEN = cały task na pauzie).
+   */
+  onToggleFreezeDepth?: (item: Item) => void;
 }
 
 export interface TreePanelOptions {
@@ -331,6 +337,9 @@ export default class TreePanel extends Window implements Focusable {
       case 'A':
         if (current && this.actions.onToggleAnchor) this.actions.onToggleAnchor(current);
         break;
+      case 'D':
+        if (current && this.actions.onToggleFreezeDepth) this.actions.onToggleFreezeDepth(current);
+        break;
       case 'I': this.toggleShowIds(); break;
       case 't':
         if (current && this.actions.onCycleTodo) this.actions.onCycleTodo(current);
@@ -411,6 +420,15 @@ export default class TreePanel extends Window implements Focusable {
         label: isFrozen ? 'Odmroź' : 'Zamroź',
         action: () => {
           if (this.actions.onToggleFreeze) this.actions.onToggleFreeze(item);
+        },
+      });
+    }
+    if (this.actions.onToggleFreezeDepth) {
+      const isDepthFrozen = item.getProperties().get('FREEZE-DEPTH') === 't';
+      items.push({
+        label: isDepthFrozen ? 'Odmroź głębokość' : 'Zamroź głębokość',
+        action: () => {
+          if (this.actions.onToggleFreezeDepth) this.actions.onToggleFreezeDepth(item);
         },
       });
     }
@@ -644,7 +662,9 @@ export default class TreePanel extends Window implements Focusable {
     const frozenMark = frozen ? '❄ ' : '';
     const anchored = node.item.getProperties().get('ANCHOR') === 't';
     const anchorMark = anchored ? '📌 ' : '';
-    const prefix = `${indent}${expandIcon}${todoChar} ${anchorMark}${priorityMark}${frozenMark}`;
+    const depthFrozen = node.item.getProperties().get('FREEZE-DEPTH') === 't';
+    const depthFrozenMark = depthFrozen ? '⊟ ' : '';
+    const prefix = `${indent}${expandIcon}${todoChar} ${anchorMark}${priorityMark}${frozenMark}${depthFrozenMark}`;
 
     const tags = node.item.getTags();
     const tagsText = tags.length > 0

@@ -54,6 +54,17 @@ export default class TreeOperations {
       };
     }
 
+    // Freeze-depth: splitting deepens granularity at the target's level. Block
+    // when the target sits strictly inside a depth-frozen subtree (its parent is
+    // the frozen node or below). Splitting the frozen node itself is allowed —
+    // that produces a sibling OUTSIDE its subtree, which the freeze does not govern.
+    if (parentId) {
+      const splitFreeze = this.findFreezeDepthAtOrAbove(tree, parentId);
+      if (splitFreeze) {
+        return this.freezeDepthBlocked(splitFreeze, `split ${itemId}`);
+      }
+    }
+
     // Klonujemy drzewo
     const newRoot = tree.root.clone();
 
@@ -642,6 +653,137 @@ export default class TreeOperations {
     };
   }
 
+  // ============ Freeze-depth (hamulec na rozwijanie poddrzewa) ============
+
+  /**
+   * Oznacza węzeł jako depth-frozen — ustawia property :FREEZE-DEPTH: t. Mówi
+   * agentowi "ten poziom szczegółowości wystarczy, nie rozwijaj poniżej". Blokuje
+   * add dziecka w tym poddrzewie oraz split potomków. Różni się od FROZEN (cały
+   * task na pauzie, ukryty) — tu task pracuje, tylko struktura nie rośnie w dół.
+   * Pomija guard kotwicy (to addytywna ochrona, jak anchor).
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła do zamrożenia głębokości
+   * @returns OperationResult
+   */
+  public static freezeDepth(tree: Tree, itemId: string): OperationResult {
+    return this.mutateItem(tree, itemId, (item) => item.setProperty('FREEZE-DEPTH', 't'), `freeze-depth: ${itemId}`, true);
+  }
+
+  /**
+   * Zdejmuje depth-freeze — usuwa property :FREEZE-DEPTH:. Pomija guard kotwicy.
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła do odmrożenia głębokości
+   * @returns OperationResult
+   */
+  public static unfreezeDepth(tree: Tree, itemId: string): OperationResult {
+    return this.mutateItem(tree, itemId, (item) => item.removeProperty('FREEZE-DEPTH'), `unfreeze-depth: ${itemId}`, true);
+  }
+
+  /**
+   * Szuka węzła z :FREEZE-DEPTH: t wśród itemId i jego przodków (w górę do
+   * korzenia). Używane przez guard add/split — dodawanie/rozsiekanie struktury
+   * wewnątrz depth-frozen poddrzewa jest zablokowane.
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła startowego
+   * @returns ID najbliższego depth-frozen węzła (self/przodek) lub null
+   */
+  private static findFreezeDepthAtOrAbove(tree: Tree, itemId: string): string | null {
+    let cursor: string | null = itemId;
+    while (cursor) {
+      const node = tree.itemsById.get(cursor) as any;
+      if (node && node.getProperties().get('FREEZE-DEPTH') === 't') return cursor;
+      cursor = this.findParentId(tree, cursor);
+    }
+    return null;
+  }
+
+  /**
+   * Buduje OperationResult odrzucający operację z powodu depth-freeze.
+   *
+   * @param freezeId - ID depth-frozen węzła, który zablokował operację
+   * @param attempted - Opis próbowanej operacji (np. "split n5")
+   * @returns OperationResult z success:false i czytelnym komunikatem
+   */
+  private static freezeDepthBlocked(freezeId: string, attempted: string): OperationResult {
+    return {
+      success: false,
+      message: `Item ${freezeId} is depth-frozen (:FREEZE-DEPTH:) — the user marked this level detailed enough; cannot ${attempted}. Drop the idea into the agent-inbox or ask the user to lift the freeze (TUI), instead of expanding here.`,
+    };
+  }
+
+  // ============ Add-lock-depth (hamulec na add blisko korzenia) ============
+
+  /**
+   * Ustawia próg blokady add na root — property :ADD-LOCK-DEPTH: N. Opt-in:
+   * brak property = brak blokady. N=0 wyłącza (usuwa property). Pisze property
+   * bezpośrednio na root (mutateItem odrzuca mutację roota), bo to konfiguracja
+   * całego planu, nie zwykła zawartość węzła.
+   *
+   * @param tree - Drzewo
+   * @param depth - Głębokość blokady (≥0; 0 wyłącza)
+   * @returns OperationResult z nowym drzewem
+   */
+  public static setAddLockDepth(tree: Tree, depth: number): OperationResult {
+    if (!Number.isInteger(depth) || depth < 0) {
+      return { success: false, message: `Invalid add-lock-depth ${depth} — must be a non-negative integer (0 disables the lock)` };
+    }
+    const base = tree.root.clone() as any;
+    const newRoot = (depth === 0
+      ? base.removeProperty('ADD-LOCK-DEPTH')
+      : base.setProperty('ADD-LOCK-DEPTH', String(depth))) as any;
+    const itemsById = this.rebuildItemsById(newRoot);
+    return {
+      success: true,
+      message: depth === 0 ? `Add-lock disabled (top-level add re-opened)` : `Add-lock-depth set to ${depth}`,
+      newTree: { root: newRoot, itemsById },
+      diff: `root :ADD-LOCK-DEPTH: ${depth === 0 ? '(removed)' : depth}`,
+    };
+  }
+
+  /**
+   * Sprawdza blokadę add-lock-depth dla dodawania dziecka pod parentId. Zwraca
+   * OperationResult-odrzucenie gdy rodzic leży na głębokości < N (zablokowany),
+   * albo null gdy add jest dozwolony / blokada wyłączona.
+   *
+   * @param tree - Drzewo
+   * @param parentId - ID rodzica, pod którym ma powstać dziecko
+   * @returns OperationResult (odrzucenie) lub null
+   */
+  private static checkAddLockDepth(tree: Tree, parentId: string): OperationResult | null {
+    const raw = tree.root.getProperties().get('ADD-LOCK-DEPTH');
+    if (raw === undefined) return null;
+    const lockDepth = parseInt(raw, 10);
+    if (isNaN(lockDepth) || lockDepth <= 0) return null;
+    const parentDepth = this.depthOf(tree, parentId);
+    if (parentDepth < lockDepth) {
+      return {
+        success: false,
+        message: `add denied: parent ${parentId} is at depth ${parentDepth}, within the add-lock-depth (${lockDepth}) the user set on this plan. Top-level structure is user-gated — drop the idea into the agent-inbox (n96) for triage, or ask the user to add it / lift the lock. Do not expand the plan's upper levels unilaterally.`,
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Liczy głębokość węzła (root = 0). Używane przez add-lock-depth.
+   *
+   * @param tree - Drzewo
+   * @param itemId - ID węzła
+   * @returns Głębokość (liczba krawędzi od korzenia)
+   */
+  private static depthOf(tree: Tree, itemId: string): number {
+    let depth = 0;
+    let cursor: string | null = this.findParentId(tree, itemId);
+    while (cursor) {
+      depth++;
+      cursor = this.findParentId(tree, cursor);
+    }
+    return depth;
+  }
+
   // ============ Wspólny szkielet mutacji single-item ============
 
   /**
@@ -894,6 +1036,24 @@ export default class TreeOperations {
     const addAnchor = this.findAnchorAtOrAbove(tree, parentId);
     if (addAnchor) {
       return this.anchorBlocked(addAnchor, `add a child under ${parentId}`);
+    }
+
+    // Freeze-depth: the user marked some ancestor (or the parent itself) as
+    // "detailed enough — do not expand below here". Adding a child anywhere in
+    // that subtree is rejected.
+    const addFreeze = this.findFreezeDepthAtOrAbove(tree, parentId);
+    if (addFreeze) {
+      return this.freezeDepthBlocked(addFreeze, `add a child under ${parentId}`);
+    }
+
+    // Add-lock-depth: opt-in structural brake near the root. The root may carry
+    // :ADD-LOCK-DEPTH: N (absent ⇒ feature off). Adding a child whose PARENT
+    // sits at depth < N is rejected — N=1 locks only top-level (parent=root,
+    // depth 0). This is a hard block: the path idea→structure must pass through
+    // the user (agent-inbox triage or an explicit grant — grant is a later stage).
+    const lockResult = this.checkAddLockDepth(tree, parentId);
+    if (lockResult) {
+      return lockResult;
     }
 
     const todoState = (todo ?? 'TODO') as any;
